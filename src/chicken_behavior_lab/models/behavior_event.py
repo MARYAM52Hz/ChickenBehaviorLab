@@ -7,15 +7,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from chicken_behavior_lab.core.enums.behavior import (
+    BehaviorType,
+)
+
+from chicken_behavior_lab.core.enums.event import (
+    EventType,
+)
+
 from chicken_behavior_lab.core.metadata import Metadata
-from chicken_behavior_lab.core.enums.behavior import BehaviorType
-from chicken_behavior_lab.core.enums.event import EventType
 
 
 @dataclass(slots=True)
 class BehaviorEvent:
     """
-    Represents one behavior transition.
+    Represents one temporal behavior event.
     """
 
     event_id: str
