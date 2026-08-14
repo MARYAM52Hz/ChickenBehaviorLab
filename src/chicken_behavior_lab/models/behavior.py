@@ -1,16 +1,17 @@
 """
 ChickenBehaviorLab Behavior Model
 =================================
-
-Canonical behavior representation.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
+from chicken_behavior_lab.core.enums.behavior import (
+    BehaviorType,
+)
+
 from chicken_behavior_lab.core.metadata import Metadata
-from chicken_behavior_lab.core.enums.behavior import BehaviorType
 
 
 @dataclass(slots=True)
