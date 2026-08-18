@@ -38,3 +38,14 @@ class BaseDetector(ABC):
         Release model resources.
         """
         raise NotImplementedError
+    class BasePoseDetector(BaseDetector):
+    """
+    Base interface for pose-aware detectors.
+    """
+
+    @abstractmethod
+    def detect_pose(self, frame: Frame) -> list[Any]:
+        """
+        Detect chickens and estimate their pose.
+        """
+        raise NotImplementedError
