@@ -2,7 +2,7 @@
 ChickenBehaviorLab YOLO-Pose Detector
 =====================================
 
-YOLO-Pose adapter for chicken detection and pose estimation.
+YOLO-Pose based detector and pose estimator.
 """
 
 from __future__ import annotations
@@ -10,20 +10,22 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from chicken_behavior_lab.adapters.pose_adapter import (
+    YOLOPoseAdapter,
+)
+
 from chicken_behavior_lab.detectors.base import (
     BasePoseDetector,
 )
 
-from chicken_behavior_lab.models.frame import Frame
+from chicken_behavior_lab.models.frame import (
+    Frame,
+)
 
 
 class YOLOPoseDetector(BasePoseDetector):
     """
-    YOLO-Pose based chicken detector.
-
-    This class acts as an adapter between the
-    Ultralytics YOLO-Pose implementation and
-    ChickenBehaviorLab's internal interfaces.
+    YOLO-Pose adapter used by ChickenBehaviorLab.
     """
 
     def __init__(
@@ -33,16 +35,28 @@ class YOLOPoseDetector(BasePoseDetector):
         device: str | None = None,
     ) -> None:
 
-        self.model_path = Path(model_path)
+        self.model_path = Path(
+            model_path
+        )
 
-        self.confidence_threshold = confidence_threshold
+        self.confidence_threshold = (
+            confidence_threshold
+        )
 
         self.device = device
 
         self.model: Any | None = None
 
+        self.pose_adapter = (
+            YOLOPoseAdapter(
+                confidence_threshold=(
+                    confidence_threshold
+                )
+            )
+        )
+
     # =====================================================
-    # Model Loading
+    # Load
     # =====================================================
 
     def load(self) -> None:
@@ -52,21 +66,23 @@ class YOLOPoseDetector(BasePoseDetector):
 
         from ultralytics import YOLO
 
-        self.model = YOLO(str(self.model_path))
+        self.model = YOLO(
+            str(self.model_path)
+        )
 
     # =====================================================
-    # Detection
+    # Raw Prediction
     # =====================================================
 
-    def detect(
+    def predict(
         self,
         frame: Frame,
     ) -> list[Any]:
 
         if self.model is None:
             raise RuntimeError(
-                "YOLO-Pose model has not been loaded. "
-                "Call load() before detect()."
+                "YOLO-Pose model is not loaded. "
+                "Call load() before prediction."
             )
 
         return self.model.predict(
@@ -77,7 +93,18 @@ class YOLOPoseDetector(BasePoseDetector):
         )
 
     # =====================================================
-    # Pose Detection
+    # Detection
+    # =====================================================
+
+    def detect(
+        self,
+        frame: Frame,
+    ) -> list[Any]:
+
+        return self.predict(frame)
+
+    # =====================================================
+    # Pose
     # =====================================================
 
     def detect_pose(
@@ -85,7 +112,20 @@ class YOLOPoseDetector(BasePoseDetector):
         frame: Frame,
     ) -> list[Any]:
 
-        return self.detect(frame)
+        results = self.predict(frame)
+
+        poses = []
+
+        for result in results:
+
+            poses.extend(
+                self.pose_adapter.adapt_result(
+                    result=result,
+                    frame_id=frame.frame_id,
+                )
+            )
+
+        return poses
 
     # =====================================================
     # Unload
@@ -93,7 +133,7 @@ class YOLOPoseDetector(BasePoseDetector):
 
     def unload(self) -> None:
         """
-        Release the loaded model.
+        Release the loaded YOLO model.
         """
 
         self.model = None
