@@ -1,65 +1,53 @@
 """
-ChickenBehaviorLab Keypoint Models
+ChickenBehaviorLab Keypoint Model
 ==================================
 
-Canonical keypoint data structures used for chicken pose estimation.
-
-Author:
-    ChickenBehaviorLab Contributors
-
-License:
-    MIT License
+Canonical representation of an anatomical keypoint
+estimated from an image or video frame.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from chicken_behavior_lab.models.geometry import Point2D
+from chicken_behavior_lab.core.enums.annotation import (
+    KeypointVisibility,
+)
 
+from chicken_behavior_lab.core.enums.keypoints import (
+    KeypointType,
+)
 
-# ==========================================================
-# Keypoint
-# ==========================================================
 
 @dataclass(slots=True)
 class Keypoint:
     """
-    Represents a single anatomical landmark.
+    Represents one anatomical keypoint of a chicken.
     """
 
-    name: str
+    keypoint_type: KeypointType
 
-    location: Point2D
+    x: float
+
+    y: float
 
     confidence: float
 
-    visible: bool = True
+    visibility: KeypointVisibility = (
+        KeypointVisibility.VISIBLE
+    )
 
+    def is_valid(
+        self,
+        confidence_threshold: float = 0.25,
+    ) -> bool:
+        """
+        Determine whether the keypoint is considered valid.
+        """
 
-# ==========================================================
-# KeypointConnection
-# ==========================================================
-
-@dataclass(slots=True)
-class KeypointConnection:
-    """
-    Defines a connection between two anatomical landmarks.
-    """
-
-    source: str
-
-    target: str
-
-
-# ==========================================================
-# KeypointSet
-# ==========================================================
-
-@dataclass(slots=True)
-class KeypointSet:
-    """
-    Collection of anatomical landmarks for one chicken.
-    """
-
-    keypoints: list[Keypoint]
+        return (
+            self.visibility
+            != KeypointVisibility.OUT_OF_FRAME
+            and self.confidence
+            >= confidence_threshold
+        )
