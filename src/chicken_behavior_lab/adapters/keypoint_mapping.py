@@ -4,16 +4,6 @@ ChickenBehaviorLab Keypoint Mapping
 
 Maps model-specific pose keypoints to the canonical
 CBAS anatomical keypoint vocabulary.
-
-This module provides a stable interface between:
-
-    Pose Model
-        ↓
-    Model Keypoint Index
-        ↓
-    CBAS Keypoint
-        ↓
-    Skeleton
 """
 
 from __future__ import annotations
@@ -28,7 +18,8 @@ from chicken_behavior_lab.core.enums.keypoints import (
 @dataclass(frozen=True, slots=True)
 class KeypointMapping:
     """
-    Mapping between a model keypoint and a CBAS keypoint.
+    Mapping between a model keypoint index and
+    a canonical CBAS keypoint.
     """
 
     model_index: int
@@ -126,15 +117,11 @@ YOLO_POSE_KEYPOINT_MAPPING: tuple[
 )
 
 
-# =========================================================
-# Lookup Functions
-# =========================================================
-
 def get_cbas_keypoint(
     model_index: int,
 ) -> KeypointType | None:
     """
-    Convert a model keypoint index into its CBAS keypoint.
+    Convert a model keypoint index to a CBAS keypoint.
     """
 
     for mapping in YOLO_POSE_KEYPOINT_MAPPING:
@@ -149,28 +136,12 @@ def get_model_index(
     keypoint: KeypointType,
 ) -> int | None:
     """
-    Convert a CBAS keypoint into the corresponding
-    model keypoint index.
+    Convert a CBAS keypoint to its model index.
     """
 
     for mapping in YOLO_POSE_KEYPOINT_MAPPING:
 
         if mapping.cbas_keypoint == keypoint:
             return mapping.model_index
-
-    return None
-
-
-def get_mapping(
-    model_index: int,
-) -> KeypointMapping | None:
-    """
-    Return the complete mapping record.
-    """
-
-    for mapping in YOLO_POSE_KEYPOINT_MAPPING:
-
-        if mapping.model_index == model_index:
-            return mapping
 
     return None
