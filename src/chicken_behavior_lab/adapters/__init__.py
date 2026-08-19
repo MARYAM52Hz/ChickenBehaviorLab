@@ -10,12 +10,12 @@ from chicken_behavior_lab.adapters.keypoint_mapping import (
     get_model_index,
 )
 
-from chicken_behavior_lab.adapters.yolo_adapter import (
-    YOLOResultAdapter,
-)
-
 from chicken_behavior_lab.adapters.pose_adapter import (
     YOLOPoseAdapter,
+)
+
+from chicken_behavior_lab.adapters.yolo_adapter import (
+    YOLOResultAdapter,
 )
 
 
@@ -24,6 +24,6 @@ __all__ = [
     "YOLO_POSE_KEYPOINT_MAPPING",
     "get_cbas_keypoint",
     "get_model_index",
-    "YOLOResultAdapter",
     "YOLOPoseAdapter",
+    "YOLOResultAdapter",
 ]
