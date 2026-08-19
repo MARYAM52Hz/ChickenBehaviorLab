@@ -1,30 +1,29 @@
 """
 ChickenBehaviorLab Pose Model
 =============================
-
-Canonical pose representation.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from chicken_behavior_lab.core.metadata import Metadata
-from chicken_behavior_lab.models.keypoint import KeypointSet
+from chicken_behavior_lab.models.keypoint import (
+    Keypoint,
+)
 
 
 @dataclass(slots=True)
 class Pose:
     """
-    Pose estimated for one tracked chicken.
+    Represents a chicken pose estimated from a frame.
     """
 
     pose_id: str
 
-    track_id: str
+    track_id: str | None
 
-    keypoints: KeypointSet
+    frame_id: str
+
+    keypoints: list[Keypoint]
 
     confidence: float
-
-    metadata: Metadata | None = None
