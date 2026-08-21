@@ -1,6 +1,6 @@
 """
-ChickenBehaviorLab Keypoint Enums
-=================================
+ChickenBehaviorLab Keypoint Types
+==================================
 """
 
 from __future__ import annotations
@@ -9,7 +9,9 @@ from enum import Enum
 
 
 class KeypointType(str, Enum):
-    """Canonical anatomical keypoints."""
+    """
+    Canonical anatomical keypoints defined by CBAS.
+    """
 
     BEAK = "beak"
 
