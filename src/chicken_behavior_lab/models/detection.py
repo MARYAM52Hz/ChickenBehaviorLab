@@ -1,20 +1,21 @@
 """
 ChickenBehaviorLab Detection Model
-==================================
+===================================
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from chicken_behavior_lab.core.metadata import Metadata
-from chicken_behavior_lab.models.geometry import BoundingBox
+from chicken_behavior_lab.models.geometry import (
+    BoundingBox,
+)
 
 
 @dataclass(slots=True)
 class Detection:
     """
-    Represents a single detected chicken.
+    Represents one detected chicken in one frame.
     """
 
     detection_id: str
@@ -26,5 +27,3 @@ class Detection:
     confidence: float
 
     class_name: str = "chicken"
-
-    metadata: Metadata | None = None
