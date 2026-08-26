@@ -18,6 +18,12 @@ from chicken_behavior_lab.features.acceleration import (
     AccelerationFeatureExtractor,
 )
 
+from chicken_behavior_lab.features.angles import (
+    JointAngleDefinition,
+    JointAngleFeatures,
+    JointAngleFeatureExtractor,
+)
+
 
 __all__ = [
     "PositionFeatures",
@@ -26,4 +32,7 @@ __all__ = [
     "VelocityFeatureExtractor",
     "AccelerationFeatures",
     "AccelerationFeatureExtractor",
+    "JointAngleDefinition",
+    "JointAngleFeatures",
+    "JointAngleFeatureExtractor",
 ]
