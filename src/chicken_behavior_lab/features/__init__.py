@@ -1,6 +1,9 @@
 """
 ChickenBehaviorLab Feature Extraction
 ======================================
+
+Feature extraction and temporal representation
+utilities for chicken pose and behavior analysis.
 """
 
 from chicken_behavior_lab.features.position import (
@@ -24,15 +27,40 @@ from chicken_behavior_lab.features.angles import (
     JointAngleFeatureExtractor,
 )
 
+from chicken_behavior_lab.features.motion import (
+    MotionFeatureFrame,
+    MotionFeatureExtractor,
+)
+
+from chicken_behavior_lab.features.temporal_features import (
+    TemporalFeatureSequence,
+    TemporalFeatureBuilder,
+)
+
 
 __all__ = [
+    # Position
     "PositionFeatures",
     "PositionFeatureExtractor",
+
+    # Velocity
     "VelocityFeatures",
     "VelocityFeatureExtractor",
+
+    # Acceleration
     "AccelerationFeatures",
     "AccelerationFeatureExtractor",
+
+    # Joint angles
     "JointAngleDefinition",
     "JointAngleFeatures",
     "JointAngleFeatureExtractor",
+
+    # Unified motion representation
+    "MotionFeatureFrame",
+    "MotionFeatureExtractor",
+
+    # Temporal representation
+    "TemporalFeatureSequence",
+    "TemporalFeatureBuilder",
 ]
