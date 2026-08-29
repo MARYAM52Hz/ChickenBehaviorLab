@@ -33,7 +33,6 @@ class SkeletonGraph:
         Node feature matrix.
 
         Shape:
-
             (V, F)
 
         where:
@@ -45,7 +44,6 @@ class SkeletonGraph:
         Graph connectivity.
 
         Shape:
-
             (2, E)
 
         where:
@@ -56,16 +54,13 @@ class SkeletonGraph:
         Optional edge feature matrix.
 
         Shape:
-
             (E, D)
 
     node_mask:
         Validity mask for nodes.
 
         Shape:
-
             (V,)
-
     """
 
     node_features: np.ndarray
@@ -108,12 +103,20 @@ class SkeletonGraph:
         Validate graph dimensions and connectivity.
         """
 
+        # -------------------------------------------------
+        # Node features
+        # -------------------------------------------------
+
         if self.node_features.ndim != 2:
 
             raise ValueError(
                 "node_features must have shape "
                 "(V, F)."
             )
+
+        # -------------------------------------------------
+        # Edge index
+        # -------------------------------------------------
 
         if self.edge_index.ndim != 2:
 
@@ -128,6 +131,10 @@ class SkeletonGraph:
                 "edge_index first dimension "
                 "must be 2."
             )
+
+        # -------------------------------------------------
+        # Edge features
+        # -------------------------------------------------
 
         if self.edge_features is not None:
 
@@ -148,6 +155,10 @@ class SkeletonGraph:
                     "must equal number of edges."
                 )
 
+        # -------------------------------------------------
+        # Node mask
+        # -------------------------------------------------
+
         if self.node_mask is not None:
 
             if self.node_mask.shape != (
@@ -158,6 +169,10 @@ class SkeletonGraph:
                     "node_mask must have shape "
                     "(V,)."
                 )
+
+        # -------------------------------------------------
+        # Edge index range
+        # -------------------------------------------------
 
         if self.num_edges > 0:
 
@@ -192,35 +207,30 @@ class TemporalSkeletonGraph:
         Temporal node feature tensor.
 
         Shape:
-
             (T, V, F)
 
     edge_index:
         Shared spatial graph topology.
 
         Shape:
-
             (2, E)
 
     frame_mask:
         Valid temporal frame mask.
 
         Shape:
-
             (T,)
 
     node_mask:
         Valid node mask.
 
         Shape:
-
             (T, V)
 
     edge_features:
         Optional temporal edge features.
 
         Shape:
-
             (T, E, D)
     """
 
@@ -258,10 +268,23 @@ class TemporalSkeletonGraph:
 
         return self.edge_index.shape[1]
 
+    @property
+    def edge_feature_dimension(self) -> int:
+        """Return edge feature dimension."""
+
+        if self.edge_features is None:
+            return 0
+
+        return self.edge_features.shape[2]
+
     def validate(self) -> None:
         """
         Validate temporal graph dimensions.
         """
+
+        # -------------------------------------------------
+        # Node features
+        # -------------------------------------------------
 
         if self.node_features.ndim != 3:
 
@@ -269,6 +292,10 @@ class TemporalSkeletonGraph:
                 "node_features must have shape "
                 "(T, V, F)."
             )
+
+        # -------------------------------------------------
+        # Edge index
+        # -------------------------------------------------
 
         if self.edge_index.ndim != 2:
 
@@ -284,6 +311,10 @@ class TemporalSkeletonGraph:
                 "must be 2."
             )
 
+        # -------------------------------------------------
+        # Dimensions
+        # -------------------------------------------------
+
         temporal_length = (
             self.node_features.shape[0]
         )
@@ -291,6 +322,10 @@ class TemporalSkeletonGraph:
         num_nodes = (
             self.node_features.shape[1]
         )
+
+        # -------------------------------------------------
+        # Frame mask
+        # -------------------------------------------------
 
         if self.frame_mask.shape != (
             temporal_length,
@@ -301,6 +336,10 @@ class TemporalSkeletonGraph:
                 "(T,)."
             )
 
+        # -------------------------------------------------
+        # Node mask
+        # -------------------------------------------------
+
         if self.node_mask.shape != (
             temporal_length,
             num_nodes,
@@ -310,6 +349,35 @@ class TemporalSkeletonGraph:
                 "node_mask must have shape "
                 "(T, V)."
             )
+
+        # -------------------------------------------------
+        # Edge index range
+        # -------------------------------------------------
+
+        if self.num_edges > 0:
+
+            if np.any(
+                self.edge_index < 0
+            ):
+
+                raise ValueError(
+                    "edge_index cannot contain "
+                    "negative node indices."
+                )
+
+            if np.any(
+                self.edge_index
+                >= num_nodes
+            ):
+
+                raise ValueError(
+                    "edge_index contains node "
+                    "indices outside graph range."
+                )
+
+        # -------------------------------------------------
+        # Edge features
+        # -------------------------------------------------
 
         if self.edge_features is not None:
 
