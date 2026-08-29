@@ -1,160 +1,230 @@
 """
-Tests for joint-angle feature extraction.
+Tests for ChickenBehaviorLab edge features.
 """
 
 import numpy as np
 
-from chicken_behavior_lab.features.angles import (
-    JointAngleDefinition,
-    JointAngleFeatureExtractor,
-)
-
-from chicken_behavior_lab.models.keypoint import (
-    Keypoint,
-)
-
-from chicken_behavior_lab.models.skeleton import (
-    Skeleton,
-)
-
-from chicken_behavior_lab.models.tracked_skeleton import (
-    TrackedSkeleton,
+from chicken_behavior_lab.graph.edge_features import (
+    EdgeFeatureExtractor,
 )
 
 
-def create_observation() -> TrackedSkeleton:
+def test_edge_feature_shape():
 
-    keypoints = [
-        Keypoint(
-            name="head",
-            x=0.0,
-            y=1.0,
-            confidence=0.95,
+    node_features = np.zeros(
+        (
+            5,
+            3,
+            7,
         ),
-        Keypoint(
-            name="neck",
-            x=0.0,
-            y=0.0,
-            confidence=0.95,
+        dtype=np.float32,
+    )
+
+    edge_index = np.array(
+        [
+            [0, 1],
+            [1, 2],
+        ],
+        dtype=np.int64,
+    )
+
+    extractor = EdgeFeatureExtractor()
+
+    edge_features = extractor.extract(
+        node_features,
+        edge_index,
+    )
+
+    assert (
+        edge_features.shape
+        == (5, 2, 3)
+    )
+
+
+def test_relative_position():
+
+    node_features = np.zeros(
+        (
+            1,
+            2,
+            7,
         ),
-        Keypoint(
-            name="body",
-            x=1.0,
-            y=0.0,
-            confidence=0.95,
+        dtype=np.float32,
+    )
+
+    node_features[
+        0,
+        0,
+        0,
+    ] = 10.0
+
+    node_features[
+        0,
+        0,
+        1,
+    ] = 20.0
+
+    node_features[
+        0,
+        1,
+        0,
+    ] = 13.0
+
+    node_features[
+        0,
+        1,
+        1,
+    ] = 24.0
+
+    edge_index = np.array(
+        [
+            [0],
+            [1],
+        ],
+        dtype=np.int64,
+    )
+
+    extractor = EdgeFeatureExtractor()
+
+    edge_features = extractor.extract(
+        node_features,
+        edge_index,
+    )
+
+    assert np.allclose(
+        edge_features[
+            0,
+            0,
+        ],
+        [
+            3.0,
+            4.0,
+            5.0,
+        ],
+    )
+
+
+def test_reverse_edge():
+
+    node_features = np.zeros(
+        (
+            1,
+            2,
+            7,
         ),
-    ]
-
-    skeleton = Skeleton(
-        skeleton_id="track_1_frame_1",
-        frame_id="frame_1",
-        keypoints=keypoints,
-        edges=[],
-        track_id="track_1",
-        confidence=0.95,
+        dtype=np.float32,
     )
 
-    return TrackedSkeleton(
-        track_id="track_1",
-        frame_id="frame_1",
-        skeleton=skeleton,
-    )
-
-
-def test_right_angle():
-
-    observation = create_observation()
-
-    definitions = [
-        JointAngleDefinition(
-            name="neck_angle",
-            first_keypoint="head",
-            vertex_keypoint="neck",
-            third_keypoint="body",
-        )
-    ]
-
-    extractor = (
-        JointAngleFeatureExtractor(
-            definitions=definitions,
-            confidence_threshold=0.3,
-        )
-    )
-
-    features = extractor.extract(
-        observation
-    )
-
-    assert features.num_angles == 1
-
-    assert features.valid_mask[0]
-
-    assert np.isclose(
-        features.angles[0],
-        np.pi / 2,
-    )
-
-
-def test_low_confidence_keypoint_is_invalid():
-
-    keypoints = [
-        Keypoint(
-            name="head",
-            x=0.0,
-            y=1.0,
-            confidence=0.95,
-        ),
-        Keypoint(
-            name="neck",
-            x=0.0,
-            y=0.0,
-            confidence=0.20,
-        ),
-        Keypoint(
-            name="body",
-            x=1.0,
-            y=0.0,
-            confidence=0.95,
-        ),
-    ]
-
-    skeleton = Skeleton(
-        skeleton_id="track_1_frame_1",
-        frame_id="frame_1",
-        keypoints=keypoints,
-        edges=[],
-        track_id="track_1",
-        confidence=0.90,
-    )
-
-    observation = TrackedSkeleton(
-        track_id="track_1",
-        frame_id="frame_1",
-        skeleton=skeleton,
-    )
-
-    definitions = [
-        JointAngleDefinition(
-            name="neck_angle",
-            first_keypoint="head",
-            vertex_keypoint="neck",
-            third_keypoint="body",
-        )
-    ]
-
-    extractor = (
-        JointAngleFeatureExtractor(
-            definitions=definitions
-        )
-    )
-
-    features = extractor.extract(
-        observation
-    )
-
-    assert not features.valid_mask[0]
-
-    assert np.isclose(
-        features.angles[0],
+    node_features[
+        0,
+        0,
+        0:2,
+    ] = [
         0.0,
+        0.0,
+    ]
+
+    node_features[
+        0,
+        1,
+        0:2,
+    ] = [
+        3.0,
+        4.0,
+    ]
+
+    edge_index = np.array(
+        [
+            [0, 1],
+            [1, 0],
+        ],
+        dtype=np.int64,
+    )
+
+    extractor = EdgeFeatureExtractor()
+
+    edge_features = extractor.extract(
+        node_features,
+        edge_index,
+    )
+
+    assert np.allclose(
+        edge_features[
+            0,
+            0,
+        ],
+        [
+            3.0,
+            4.0,
+            5.0,
+        ],
+    )
+
+    assert np.allclose(
+        edge_features[
+            0,
+            1,
+        ],
+        [
+            -3.0,
+            -4.0,
+            5.0,
+        ],
+    )
+
+
+def test_multiple_frames():
+
+    node_features = np.zeros(
+        (
+            2,
+            2,
+            7,
+        ),
+        dtype=np.float32,
+    )
+
+    node_features[
+        0,
+        1,
+        0,
+    ] = 3.0
+
+    node_features[
+        1,
+        1,
+        0,
+    ] = 4.0
+
+    edge_index = np.array(
+        [
+            [0],
+            [1],
+        ],
+        dtype=np.int64,
+    )
+
+    extractor = EdgeFeatureExtractor()
+
+    edge_features = extractor.extract(
+        node_features,
+        edge_index,
+    )
+
+    assert np.isclose(
+        edge_features[
+            0,
+            0,
+            2,
+        ],
+        3.0,
+    )
+
+    assert np.isclose(
+        edge_features[
+            1,
+            0,
+            2,
+        ],
+        4.0,
     )
