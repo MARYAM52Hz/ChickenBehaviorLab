@@ -55,6 +55,10 @@ def create_sequence() -> TemporalFeatureSequence:
     )
 
 
+# =========================================================
+# Edge index
+# =========================================================
+
 def test_edge_index_is_undirected():
 
     builder = SkeletonGraphBuilder(
@@ -82,6 +86,10 @@ def test_edge_index_is_undirected():
     )
 
 
+# =========================================================
+# Temporal graph
+# =========================================================
+
 def test_temporal_graph_shape():
 
     sequence = create_sequence()
@@ -107,6 +115,84 @@ def test_temporal_graph_shape():
         == (2, 4)
     )
 
+
+# =========================================================
+# Edge features
+# =========================================================
+
+def test_edge_features_are_attached():
+
+    sequence = create_sequence()
+
+    # Frame 0
+    sequence.features[
+        0,
+        0,
+        0:2,
+    ] = [
+        0.0,
+        0.0,
+    ]
+
+    sequence.features[
+        0,
+        1,
+        0:2,
+    ] = [
+        3.0,
+        4.0,
+    ]
+
+    builder = SkeletonGraphBuilder(
+        skeleton_connections=[
+            (0, 1),
+        ]
+    )
+
+    graph = builder.build(
+        sequence
+    )
+
+    assert (
+        graph.edge_features
+        is not None
+    )
+
+    assert (
+        graph.edge_features.shape
+        == (4, 2, 3)
+    )
+
+    # 0 -> 1
+    assert np.allclose(
+        graph.edge_features[
+            0,
+            0,
+        ],
+        [
+            3.0,
+            4.0,
+            5.0,
+        ],
+    )
+
+    # 1 -> 0
+    assert np.allclose(
+        graph.edge_features[
+            0,
+            1,
+        ],
+        [
+            -3.0,
+            -4.0,
+            5.0,
+        ],
+    )
+
+
+# =========================================================
+# Masks
+# =========================================================
 
 def test_temporal_graph_masks():
 
@@ -143,6 +229,10 @@ def test_temporal_graph_masks():
     )
 
 
+# =========================================================
+# Graph validation
+# =========================================================
+
 def test_graph_validation():
 
     graph = SkeletonGraph(
@@ -162,4 +252,52 @@ def test_graph_validation():
     graph.validate()
 
     assert graph.num_nodes == 3
+
     assert graph.num_edges == 2
+
+
+# =========================================================
+# Temporal graph validation
+# =========================================================
+
+def test_temporal_graph_validation():
+
+    sequence = create_sequence()
+
+    builder = SkeletonGraphBuilder(
+        skeleton_connections=[
+            (0, 1),
+            (1, 2),
+        ]
+    )
+
+    graph = builder.build(
+        sequence
+    )
+
+    graph.validate()
+
+    assert isinstance(
+        graph,
+        TemporalSkeletonGraph,
+    )
+
+    assert (
+        graph.temporal_length
+        == 4
+    )
+
+    assert (
+        graph.num_nodes
+        == 3
+    )
+
+    assert (
+        graph.num_edges
+        == 4
+    )
+
+    assert (
+        graph.edge_feature_dimension
+        == 3
+    )
