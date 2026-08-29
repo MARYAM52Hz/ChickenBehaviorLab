@@ -9,16 +9,27 @@ For every skeleton edge:
 
     source -> target
 
-the following features can be computed:
+the following features are computed:
 
     relative_dx
     relative_dy
     distance
 
-The implementation supports temporal feature tensors
-with shape:
+Input:
 
     T × V × F
+
+Output:
+
+    T × E × D
+
+where:
+
+    T = temporal length
+    V = number of nodes
+    E = number of edges
+    F = node feature dimension
+    D = edge feature dimension
 """
 
 from __future__ import annotations
@@ -71,21 +82,20 @@ class EdgeFeatureExtractor:
             Node feature tensor.
 
             Shape:
-
                 (T, V, F)
 
         edge_index:
             Graph connectivity.
 
             Shape:
-
                 (2, E)
 
         Returns
         -------
         np.ndarray
-            Edge feature tensor:
+            Edge feature tensor.
 
+            Shape:
                 (T, E, 3)
 
             Feature order:
@@ -100,13 +110,16 @@ class EdgeFeatureExtractor:
             edge_index,
         )
 
-        source_indices = (
-            edge_index[0]
-        )
+        # -------------------------------------------------
+        # Edge endpoints
+        # -------------------------------------------------
 
-        target_indices = (
-            edge_index[1]
-        )
+        source_indices = edge_index[0]
+        target_indices = edge_index[1]
+
+        # -------------------------------------------------
+        # Source coordinates
+        # -------------------------------------------------
 
         source_xy = node_features[
             :,
@@ -117,6 +130,10 @@ class EdgeFeatureExtractor:
             ],
         ]
 
+        # -------------------------------------------------
+        # Target coordinates
+        # -------------------------------------------------
+
         target_xy = node_features[
             :,
             target_indices,
@@ -126,16 +143,28 @@ class EdgeFeatureExtractor:
             ],
         ]
 
+        # -------------------------------------------------
+        # Relative displacement
+        # -------------------------------------------------
+
         relative = (
             target_xy
             - source_xy
         )
+
+        # -------------------------------------------------
+        # Euclidean distance
+        # -------------------------------------------------
 
         distance = np.linalg.norm(
             relative,
             axis=-1,
             keepdims=True,
         )
+
+        # -------------------------------------------------
+        # Final edge feature tensor
+        # -------------------------------------------------
 
         edge_features = np.concatenate(
             [
@@ -150,7 +179,7 @@ class EdgeFeatureExtractor:
         )
 
     # =====================================================
-    # Input validation
+    # Validation
     # =====================================================
 
     def _validate_inputs(
@@ -159,7 +188,7 @@ class EdgeFeatureExtractor:
         edge_index: np.ndarray,
     ) -> None:
         """
-        Validate input dimensions.
+        Validate input dimensions and indices.
         """
 
         if node_features.ndim != 3:
@@ -187,6 +216,10 @@ class EdgeFeatureExtractor:
             node_features.shape[1]
         )
 
+        # -------------------------------------------------
+        # Validate node indices
+        # -------------------------------------------------
+
         if edge_index.size > 0:
 
             if np.any(
@@ -207,6 +240,10 @@ class EdgeFeatureExtractor:
                     "node index outside the "
                     "node feature range."
                 )
+
+        # -------------------------------------------------
+        # Validate feature indices
+        # -------------------------------------------------
 
         feature_dimension = (
             node_features.shape[2]
