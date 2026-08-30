@@ -181,3 +181,40 @@ class BehaviorLabelEncoder:
         )
 
         return self.labels[index]
+        DEFAULT_BEHAVIOR_LABELS = [
+    BehaviorLabel(
+        behavior_id="feeding",
+        name="Feeding",
+        description=(
+            "Chicken performing feeding-related activity."
+        ),
+    ),
+    BehaviorLabel(
+        behavior_id="walking",
+        name="Walking",
+        description=(
+            "Chicken performing locomotion."
+        ),
+    ),
+    BehaviorLabel(
+        behavior_id="standing",
+        name="Standing",
+        description=(
+            "Chicken maintaining a standing posture."
+        ),
+    ),
+    BehaviorLabel(
+        behavior_id="drinking",
+        name="Drinking",
+        description=(
+            "Chicken performing drinking-related activity."
+        ),
+    ),
+    BehaviorLabel(
+        behavior_id="resting",
+        name="Resting",
+        description=(
+            "Chicken performing resting-related activity."
+        ),
+    ),
+]
