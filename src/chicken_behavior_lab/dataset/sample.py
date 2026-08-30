@@ -2,7 +2,8 @@
 ChickenBehaviorLab Dataset Sample
 =================================
 
-Data structures representing a single training sample.
+Data structure representing a single graph-based
+behavior recognition sample.
 """
 
 from __future__ import annotations
@@ -27,18 +28,23 @@ class GraphSample:
         Temporal skeleton graph.
 
     label:
-        Behavior class index.
+        Integer ML class index.
+
+    behavior_id:
+        Canonical CBO behavior identifier.
 
     sample_id:
-        Unique identifier for this sample.
+        Unique sample identifier.
 
     metadata:
-        Optional metadata associated with the sample.
+        Optional sample metadata.
     """
 
     graph: TemporalSkeletonGraph
 
     label: int
+
+    behavior_id: str
 
     sample_id: str
 
@@ -51,6 +57,10 @@ class GraphSample:
 
         self.graph.validate()
 
+        # -------------------------------------------------
+        # Label validation
+        # -------------------------------------------------
+
         if not isinstance(
             self.label,
             (int, np.integer),
@@ -59,6 +69,26 @@ class GraphSample:
             raise TypeError(
                 "label must be an integer."
             )
+
+        if self.label < 0:
+
+            raise ValueError(
+                "label cannot be negative."
+            )
+
+        # -------------------------------------------------
+        # Behavior ID
+        # -------------------------------------------------
+
+        if not self.behavior_id:
+
+            raise ValueError(
+                "behavior_id cannot be empty."
+            )
+
+        # -------------------------------------------------
+        # Sample ID
+        # -------------------------------------------------
 
         if not self.sample_id:
 
