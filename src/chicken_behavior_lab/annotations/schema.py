@@ -125,3 +125,43 @@ class BehaviorAnnotation:
             - self.start_frame
             + 1
         )
+@dataclass(slots=True)
+class AnnotationSet:
+    """
+    Collection of behavior annotations belonging
+    to a dataset or video collection.
+    """
+
+    annotations: list[BehaviorAnnotation]
+
+    def validate(self) -> None:
+        """
+        Validate all annotations and ensure annotation IDs
+        are unique.
+        """
+
+        annotation_ids: set[str] = set()
+
+        for annotation in self.annotations:
+
+            annotation.validate()
+
+            if annotation.annotation_id in annotation_ids:
+                raise ValueError(
+                    "Duplicate annotation_id: "
+                    f"{annotation.annotation_id}"
+                )
+
+            annotation_ids.add(
+                annotation.annotation_id
+            )
+
+    def __len__(self) -> int:
+        return len(
+            self.annotations
+        )
+
+    def __iter__(self):
+        return iter(
+            self.annotations
+        )
