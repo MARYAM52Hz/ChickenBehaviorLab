@@ -1,0 +1,39 @@
+{
+  "schema_version": "0.1.0",
+  "dataset_id": "chicken_behavior_demo",
+  "annotations": [
+    {
+      "annotation_id": "ann_000001",
+      "video_id": "video_001",
+      "track_id": 1,
+      "behavior_id": "feeding",
+      "start_frame": 100,
+      "end_frame": 180,
+      "annotator": "annotator_01",
+      "confidence": 0.95,
+      "notes": "Chicken feeding near feeder."
+    },
+    {
+      "annotation_id": "ann_000002",
+      "video_id": "video_001",
+      "track_id": 1,
+      "behavior_id": "walking",
+      "start_frame": 181,
+      "end_frame": 230,
+      "annotator": "annotator_01",
+      "confidence": 0.90,
+      "notes": "Chicken walking away from feeder."
+    },
+    {
+      "annotation_id": "ann_000003",
+      "video_id": "video_001",
+      "track_id": 2,
+      "behavior_id": "standing",
+      "start_frame": 100,
+      "end_frame": 160,
+      "annotator": "annotator_01",
+      "confidence": 0.88,
+      "notes": "Chicken stationary."
+    }
+  ]
+}
