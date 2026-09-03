@@ -5,6 +5,18 @@ ChickenBehaviorLab Feature Extraction
 Feature extraction, motion representation,
 temporal sequencing, and normalization utilities.
 """
+"""
+ChickenBehaviorLab Features Module
+===================================
+"""
+
+from chicken_behavior_lab.features.temporal_features import (
+    TemporalFeatureSequence,
+)
+
+from chicken_behavior_lab.features.feature_store import (
+    FeatureStore,
+)
 
 from chicken_behavior_lab.features.position import (
     PositionFeatures,
@@ -72,4 +84,8 @@ __all__ = [
     # Normalization
     "NormalizationStatistics",
     "MotionFeatureNormalizer",
+
+    
+    "TemporalFeatureSequence",
+    "FeatureStore",
 ]
