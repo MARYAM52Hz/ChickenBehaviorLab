@@ -1,41 +1,38 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
 
 import numpy as np
 import torch
-from torch_geometric.data import Data, Dataset
 
-from chicken_behavior_lab.dataset.sample import GraphSample
+from torch_geometric.data import (
+    Data,
+    Dataset,
+)
+
+from chicken_behavior_lab.dataset.sample import (
+    GraphSample,
+)
 
 
 class PyGGraphDataset(Dataset):
     """
-    PyTorch Geometric dataset for ChickenBehaviorLab.
+    Convert ChickenBehaviorLab graph samples into
+    PyTorch Geometric Data objects.
 
-    Each GraphSample is converted into a PyG Data object.
+    Expected graph representation:
 
-    The initial implementation keeps the temporal dimension.
+        node_features:
+            (N, F)
 
-    Input graph:
+        edge_index:
+            (2, E)
 
-        x
-        shape = (T, V, F)
+        edge_features:
+            (E, D)
 
-        edge_index
-        shape = (2, E)
-
-        edge_attr
-        shape = (T, E, D)
-
-    where:
-
-        T = number of frames
-        V = number of skeleton nodes
-        E = number of edges
-        F = node feature dimension
-        D = edge feature dimension
+        edge_type:
+            (E,)
     """
 
     def __init__(
@@ -45,18 +42,15 @@ class PyGGraphDataset(Dataset):
 
         super().__init__()
 
-        self.samples = list(samples)
+        self.samples = list(
+            samples
+        )
 
         self._validate_samples()
 
-    # =====================================================
-    # Validation
-    # =====================================================
-
-    def _validate_samples(self) -> None:
-        """
-        Validate all GraphSample objects.
-        """
+    def _validate_samples(
+        self,
+    ) -> None:
 
         for index, sample in enumerate(
             self.samples
@@ -73,100 +67,118 @@ class PyGGraphDataset(Dataset):
 
             sample.validate()
 
-    # =====================================================
-    # Length
-    # =====================================================
+    def len(
+        self,
+    ) -> int:
 
-    def len(self) -> int:
-        """
-        Return number of graph samples.
-        """
-
-        return len(self.samples)
-
-    # =====================================================
-    # Get Item
-    # =====================================================
+        return len(
+            self.samples
+        )
 
     def get(
         self,
         index: int,
     ) -> Data:
-        """
-        Convert one GraphSample into a PyG Data object.
-        """
 
-        sample = self.samples[index]
+        sample = self.samples[
+            index
+        ]
 
         graph = sample.graph
 
-        node_features = np.asarray(
-            graph.node_features,
-            dtype=np.float32,
-        )
+        graph.validate()
 
-        edge_index = np.asarray(
-            graph.edge_index,
-            dtype=np.int64,
-        )
-
-        edge_features = np.asarray(
-            graph.edge_features,
-            dtype=np.float32,
-        )
-
-        # -------------------------------------------------
-        # Convert NumPy → PyTorch
-        # -------------------------------------------------
+        # =============================================
+        # Node features
+        # =============================================
 
         x = torch.from_numpy(
-            node_features
+            np.asarray(
+                graph.node_features,
+                dtype=np.float32,
+            )
         )
 
-        edge_index_tensor = torch.from_numpy(
-            edge_index
+        # =============================================
+        # Edges
+        # =============================================
+
+        edge_index = torch.from_numpy(
+            np.asarray(
+                graph.edge_index,
+                dtype=np.int64,
+            )
         )
+
+        # =============================================
+        # Edge attributes
+        # =============================================
 
         edge_attr = torch.from_numpy(
-            edge_features
+            np.asarray(
+                graph.edge_features,
+                dtype=np.float32,
+            )
         )
 
-        # -------------------------------------------------
+        # =============================================
+        # Edge type
+        # =============================================
+
+        edge_type = torch.from_numpy(
+            np.asarray(
+                graph.edge_type,
+                dtype=np.int64,
+            )
+        )
+
+        # =============================================
         # Label
-        # -------------------------------------------------
+        # =============================================
 
         y = torch.tensor(
-            [sample.label],
+            sample.label,
             dtype=torch.long,
         )
 
-        # -------------------------------------------------
-        # Masks
-        # -------------------------------------------------
-
-        frame_ids = list(
-            graph.frame_ids
-        )
+        # =============================================
+        # PyG object
+        # =============================================
 
         data = Data(
             x=x,
-            edge_index=edge_index_tensor,
+            edge_index=edge_index,
             edge_attr=edge_attr,
+            edge_type=edge_type,
             y=y,
         )
 
-        # -------------------------------------------------
-        # Metadata
-        # -------------------------------------------------
+        # =============================================
+        # Research metadata
+        # =============================================
 
-        data.sample_id = sample.sample_id
+        data.sample_id = (
+            sample.sample_id
+        )
 
         data.behavior_id = (
             sample.behavior_id
         )
 
-        data.frame_ids = frame_ids
+        data.frame_ids = list(
+            graph.frame_ids
+        )
 
-        data.metadata = sample.metadata
+        data.num_frames = (
+            graph.num_frames
+        )
+
+        data.num_keypoints = (
+            graph.num_keypoints
+        )
+
+        data.metadata = (
+            sample.metadata
+        )
 
         return data
