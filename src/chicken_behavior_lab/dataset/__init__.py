@@ -16,6 +16,10 @@ from chicken_behavior_lab.dataset.pyg_dataset import (
     PyGGraphDataset,
 )
 
+from chicken_behavior_lab.dataset.split import (
+    train_validation_split,
+)
+
 
 __all__ = [
     "GraphSample",
@@ -24,4 +28,5 @@ __all__ = [
     "FeatureSequenceProvider",
     "GraphBuilderProtocol",
     "PyGGraphDataset",
+    "train_validation_split",
 ]
