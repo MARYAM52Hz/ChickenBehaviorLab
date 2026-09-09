@@ -1,0 +1,19 @@
+{
+  "dataset_version": "0.1.0",
+  "samples": [
+    {
+      "sample_id": "video01_track01_000001",
+      "track_id": "track01",
+      "video_id": "video01",
+      "feature_file": "data/features/video01_track01_000001.npz",
+      "label": "walking"
+    },
+    {
+      "sample_id": "video01_track01_000002",
+      "track_id": "track01",
+      "video_id": "video01",
+      "feature_file": "data/features/video01_track01_000002.npz",
+      "label": "feeding"
+    }
+  ]
+}
