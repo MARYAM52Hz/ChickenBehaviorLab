@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from typing import Sequence
 
-import numpy as np
 import torch
-
 from torch_geometric.data import (
     Data,
     Dataset,
@@ -17,22 +15,8 @@ from chicken_behavior_lab.dataset.sample import (
 
 class PyGGraphDataset(Dataset):
     """
-    Convert ChickenBehaviorLab graph samples into
+    Converts GraphSample objects into
     PyTorch Geometric Data objects.
-
-    Expected graph representation:
-
-        node_features:
-            (N, F)
-
-        edge_index:
-            (2, E)
-
-        edge_features:
-            (E, D)
-
-        edge_type:
-            (E,)
     """
 
     def __init__(
@@ -46,31 +30,27 @@ class PyGGraphDataset(Dataset):
             samples
         )
 
-        self._validate_samples()
+        self.labels = sorted(
+            {
+                sample.label
+                for sample in self.samples
+            }
+        )
 
-    def _validate_samples(
-        self,
-    ) -> None:
+        self.label_to_index = {
+            label: index
+            for index, label in enumerate(
+                self.labels
+            )
+        }
 
-        for index, sample in enumerate(
-            self.samples
-        ):
+        self.index_to_label = {
+            index: label
+            for label, index
+            in self.label_to_index.items()
+        }
 
-            if not isinstance(
-                sample,
-                GraphSample,
-            ):
-                raise TypeError(
-                    f"Sample {index} must be "
-                    "a GraphSample."
-                )
-
-            sample.validate()
-
-    def len(
-        self,
-    ) -> int:
-
+    def len(self) -> int:
         return len(
             self.samples
         )
@@ -84,97 +64,32 @@ class PyGGraphDataset(Dataset):
             index
         ]
 
-        graph = sample.graph
-
-        graph.validate()
-
-        # =============================================
-        # Node features
-        # =============================================
-
-        x = torch.from_numpy(
-            np.asarray(
-                graph.node_features,
-                dtype=np.float32,
+        if sample.label not in (
+            self.label_to_index
+        ):
+            raise ValueError(
+                f"Unknown label: "
+                f"{sample.label}"
             )
-        )
-
-        # =============================================
-        # Edges
-        # =============================================
-
-        edge_index = torch.from_numpy(
-            np.asarray(
-                graph.edge_index,
-                dtype=np.int64,
-            )
-        )
-
-        # =============================================
-        # Edge attributes
-        # =============================================
-
-        edge_attr = torch.from_numpy(
-            np.asarray(
-                graph.edge_features,
-                dtype=np.float32,
-            )
-        )
-
-        # =============================================
-        # Edge type
-        # =============================================
-
-        edge_type = torch.from_numpy(
-            np.asarray(
-                graph.edge_type,
-                dtype=np.int64,
-            )
-        )
-
-        # =============================================
-        # Label
-        # =============================================
 
         y = torch.tensor(
-            sample.label,
+            [
+                self.label_to_index[
+                    sample.label
+                ]
+            ],
             dtype=torch.long,
         )
 
-        # =============================================
-        # PyG object
-        # =============================================
-
         data = Data(
-            x=x,
-            edge_index=edge_index,
-            edge_attr=edge_attr,
-            edge_type=edge_type,
+            x=sample.node_features,
+            edge_index=sample.edge_index,
+            edge_attr=sample.edge_features,
             y=y,
         )
 
-        # =============================================
-        # Research metadata
-        # =============================================
-
         data.sample_id = (
             sample.sample_id
-        )
-
-        data.behavior_id = (
-            sample.behavior_id
-        )
-
-        data.frame_ids = list(
-            graph.frame_ids
-        )
-
-        data.num_frames = (
-            graph.num_frames
-        )
-
-        data.num_keypoints = (
-            graph.num_keypoints
         )
 
         data.metadata = (
