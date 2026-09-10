@@ -3,11 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class TrainingConfig:
-    """
-    Configuration for behavior-classification training.
-    """
 
     epochs: int = 50
 
@@ -25,6 +22,10 @@ class TrainingConfig:
 
     validation_fraction: float = 0.2
 
+    test_fraction: float = 0.2
+
+    split_group: str = "video"
+
     random_seed: int = 42
 
     num_workers: int = 0
@@ -35,52 +36,57 @@ class TrainingConfig:
     )
 
     def validate(self) -> None:
-        """
-        Validate configuration values.
-        """
 
         if self.epochs <= 0:
             raise ValueError(
-                "epochs must be positive."
+                "epochs must be > 0."
             )
 
         if self.batch_size <= 0:
             raise ValueError(
-                "batch_size must be positive."
+                "batch_size must be > 0."
             )
 
         if self.learning_rate <= 0:
             raise ValueError(
-                "learning_rate must be positive."
+                "learning_rate must be > 0."
             )
 
-        if self.weight_decay < 0:
+        if not (
+            0
+            <= self.validation_fraction
+            < 1
+        ):
             raise ValueError(
-                "weight_decay cannot be negative."
+                "validation_fraction must "
+                "be in [0, 1)."
             )
 
-        if self.hidden_dim <= 0:
+        if not (
+            0
+            <= self.test_fraction
+            < 1
+        ):
             raise ValueError(
-                "hidden_dim must be positive."
+                "test_fraction must "
+                "be in [0, 1)."
             )
 
-        if self.num_gnn_layers <= 0:
+        if (
+            self.validation_fraction
+            + self.test_fraction
+            >= 1
+        ):
             raise ValueError(
-                "num_gnn_layers must be positive."
+                "validation_fraction + "
+                "test_fraction must be < 1."
             )
 
-        if not 0.0 <= self.dropout < 1.0:
+        if self.split_group not in {
+            "video",
+            "track",
+        }:
             raise ValueError(
-                "dropout must be in [0, 1)."
-            )
-
-        if not 0.0 < self.validation_fraction < 1.0:
-            raise ValueError(
-                "validation_fraction must be "
-                "between 0 and 1."
-            )
-
-        if self.num_workers < 0:
-            raise ValueError(
-                "num_workers cannot be negative."
+                "split_group must be "
+                "'video' or 'track'."
             )
