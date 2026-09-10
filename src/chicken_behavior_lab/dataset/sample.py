@@ -1,97 +1,55 @@
-"""
-ChickenBehaviorLab Dataset Sample
-=================================
-
-Data structure representing a single graph-based
-behavior recognition sample.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
-import numpy as np
-
-from chicken_behavior_lab.graph.graph import (
-    TemporalSkeletonGraph,
-)
+import torch
+from torch import Tensor
 
 
 @dataclass(slots=True)
 class GraphSample:
     """
-    A single graph-based behavior recognition sample.
+    A single graph sample used by ChickenBehaviorLab.
 
-    Parameters
-    ----------
-    graph:
-        Temporal skeleton graph.
-
-    label:
-        Integer ML class index.
-
-    behavior_id:
-        Canonical CBO behavior identifier.
-
-    sample_id:
-        Unique sample identifier.
-
-    metadata:
-        Optional sample metadata.
+    Each sample represents one temporal skeleton graph
+    extracted from a chicken track.
     """
-
-    graph: TemporalSkeletonGraph
-
-    label: int
-
-    behavior_id: str
 
     sample_id: str
 
-    metadata: dict | None = None
+    node_features: Tensor
 
-    def validate(self) -> None:
+    edge_index: Tensor
+
+    edge_features: Tensor
+
+    label: str
+
+    metadata: dict[str, Any]
+
+    @property
+    def video_id(self) -> str:
         """
-        Validate the graph sample.
+        Return the source video identifier.
         """
 
-        self.graph.validate()
-
-        # -------------------------------------------------
-        # Label validation
-        # -------------------------------------------------
-
-        if not isinstance(
-            self.label,
-            (int, np.integer),
-        ):
-
-            raise TypeError(
-                "label must be an integer."
+        return str(
+            self.metadata.get(
+                "video_id",
+                "unknown",
             )
+        )
 
-        if self.label < 0:
+    @property
+    def track_id(self) -> str:
+        """
+        Return the source track identifier.
+        """
 
-            raise ValueError(
-                "label cannot be negative."
+        return str(
+            self.metadata.get(
+                "track_id",
+                "unknown",
             )
-
-        # -------------------------------------------------
-        # Behavior ID
-        # -------------------------------------------------
-
-        if not self.behavior_id:
-
-            raise ValueError(
-                "behavior_id cannot be empty."
-            )
-
-        # -------------------------------------------------
-        # Sample ID
-        # -------------------------------------------------
-
-        if not self.sample_id:
-
-            raise ValueError(
-                "sample_id cannot be empty."
-            )
+        )
