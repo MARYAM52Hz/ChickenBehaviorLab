@@ -3,10 +3,7 @@ from __future__ import annotations
 from typing import Sequence
 
 import torch
-from torch_geometric.data import (
-    Data,
-    Dataset,
-)
+from torch_geometric.data import Data, Dataset
 
 from chicken_behavior_lab.dataset.sample import (
     GraphSample,
@@ -15,8 +12,7 @@ from chicken_behavior_lab.dataset.sample import (
 
 class PyGGraphDataset(Dataset):
     """
-    Converts GraphSample objects into
-    PyTorch Geometric Data objects.
+    PyTorch Geometric dataset for ChickenBehaviorLab.
     """
 
     def __init__(
@@ -26,9 +22,7 @@ class PyGGraphDataset(Dataset):
 
         super().__init__()
 
-        self.samples = list(
-            samples
-        )
+        self.samples = list(samples)
 
         self.labels = sorted(
             {
@@ -51,49 +45,37 @@ class PyGGraphDataset(Dataset):
         }
 
     def len(self) -> int:
-        return len(
-            self.samples
-        )
+        return len(self.samples)
 
     def get(
         self,
         index: int,
     ) -> Data:
 
-        sample = self.samples[
-            index
-        ]
+        sample = self.samples[index]
 
-        if sample.label not in (
-            self.label_to_index
-        ):
+        if sample.label not in self.label_to_index:
             raise ValueError(
-                f"Unknown label: "
-                f"{sample.label}"
+                f"Unknown label: {sample.label}"
             )
 
-        y = torch.tensor(
-            [
-                self.label_to_index[
-                    sample.label
-                ]
-            ],
-            dtype=torch.long,
-        )
+        label_index = self.label_to_index[
+            sample.label
+        ]
 
         data = Data(
             x=sample.node_features,
             edge_index=sample.edge_index,
             edge_attr=sample.edge_features,
-            y=y,
+            y=torch.tensor(
+                [label_index],
+                dtype=torch.long,
+            ),
         )
 
-        data.sample_id = (
-            sample.sample_id
-        )
-
-        data.metadata = (
-            sample.metadata
-        )
+        # Keep metadata attached to the graph.
+        data.sample_id = sample.sample_id
+        data.video_id = sample.video_id
+        data.track_id = sample.track_id
 
         return data
