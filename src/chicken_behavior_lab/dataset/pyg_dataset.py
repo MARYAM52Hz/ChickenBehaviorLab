@@ -1,9 +1,12 @@
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Mapping, Sequence
 
 import torch
-from torch_geometric.data import Data, Dataset
+from torch_geometric.data import (
+    Data,
+    Dataset,
+)
 
 from chicken_behavior_lab.dataset.sample import (
     GraphSample,
@@ -12,31 +15,46 @@ from chicken_behavior_lab.dataset.sample import (
 
 class PyGGraphDataset(Dataset):
     """
-    PyTorch Geometric dataset for ChickenBehaviorLab.
+    PyTorch Geometric dataset for
+    ChickenBehaviorLab.
     """
 
     def __init__(
         self,
         samples: Sequence[GraphSample],
+        label_to_index: Mapping[
+            str,
+            int,
+        ] | None = None,
     ) -> None:
 
         super().__init__()
 
-        self.samples = list(samples)
-
-        self.labels = sorted(
-            {
-                sample.label
-                for sample in self.samples
-            }
+        self.samples = list(
+            samples
         )
 
-        self.label_to_index = {
-            label: index
-            for index, label in enumerate(
-                self.labels
+        if label_to_index is None:
+
+            labels = sorted(
+                {
+                    sample.label
+                    for sample in self.samples
+                }
             )
-        }
+
+            self.label_to_index = {
+                label: index
+                for index, label in enumerate(
+                    labels
+                )
+            }
+
+        else:
+
+            self.label_to_index = dict(
+                label_to_index
+            )
 
         self.index_to_label = {
             index: label
@@ -44,24 +62,47 @@ class PyGGraphDataset(Dataset):
             in self.label_to_index.items()
         }
 
+        unknown_labels = {
+            sample.label
+            for sample in self.samples
+            if sample.label
+            not in self.label_to_index
+        }
+
+        if unknown_labels:
+
+            raise ValueError(
+                "Dataset contains labels that "
+                "are not present in the shared "
+                f"label mapping: {unknown_labels}"
+            )
+
+    @property
+    def labels(self) -> list[str]:
+
+        return list(
+            self.label_to_index.keys()
+        )
+
     def len(self) -> int:
-        return len(self.samples)
+        return len(
+            self.samples
+        )
 
     def get(
         self,
         index: int,
     ) -> Data:
 
-        sample = self.samples[index]
-
-        if sample.label not in self.label_to_index:
-            raise ValueError(
-                f"Unknown label: {sample.label}"
-            )
-
-        label_index = self.label_to_index[
-            sample.label
+        sample = self.samples[
+            index
         ]
+
+        label_index = (
+            self.label_to_index[
+                sample.label
+            ]
+        )
 
         data = Data(
             x=sample.node_features,
@@ -73,9 +114,16 @@ class PyGGraphDataset(Dataset):
             ),
         )
 
-        # Keep metadata attached to the graph.
-        data.sample_id = sample.sample_id
-        data.video_id = sample.video_id
-        data.track_id = sample.track_id
+        data.sample_id = (
+            sample.sample_id
+        )
+
+        data.video_id = (
+            sample.video_id
+        )
+
+        data.track_id = (
+            sample.track_id
+        )
 
         return data
