@@ -20,6 +20,11 @@ from chicken_behavior_lab.dataset.split import (
     train_validation_split,
 )
 
+from chicken_behavior_lab.dataset.group_split import (
+    DatasetSplit,
+    group_train_validation_test_split,
+)
+
 from chicken_behavior_lab.dataset.factory import (
     AnnotationRecord,
     DatasetFactory,
@@ -34,6 +39,8 @@ __all__ = [
     "GraphBuilderProtocol",
     "PyGGraphDataset",
     "train_validation_split",
+    "DatasetSplit",
+    "group_train_validation_test_split",
     "AnnotationRecord",
     "DatasetFactory",
 ]
