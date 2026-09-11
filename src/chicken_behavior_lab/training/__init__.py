@@ -3,29 +3,34 @@ from chicken_behavior_lab.training.config import (
 )
 
 from chicken_behavior_lab.training.losses import (
-    BehaviorClassificationLoss,
+    ClassificationLoss,
 )
 
 from chicken_behavior_lab.training.metrics import (
     ClassificationMetrics,
-    build_confusion_matrix,
     compute_classification_metrics,
+    format_classification_report,
 )
 
 from chicken_behavior_lab.training.trainer import (
-    EpochResult,
     Trainer,
     TrainingHistory,
+)
+
+from chicken_behavior_lab.training.evaluator import (
+    EvaluationResult,
+    Evaluator,
 )
 
 
 __all__ = [
     "TrainingConfig",
-    "BehaviorClassificationLoss",
+    "ClassificationLoss",
     "ClassificationMetrics",
-    "build_confusion_matrix",
     "compute_classification_metrics",
-    "EpochResult",
+    "format_classification_report",
     "Trainer",
     "TrainingHistory",
+    "EvaluationResult",
+    "Evaluator",
 ]
