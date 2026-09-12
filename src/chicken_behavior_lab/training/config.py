@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from typing import Any
 
 
 @dataclass(slots=True)
@@ -52,10 +53,25 @@ class TrainingConfig:
                 "learning_rate must be > 0."
             )
 
+        if self.weight_decay < 0:
+            raise ValueError(
+                "weight_decay must be >= 0."
+            )
+
+        if self.hidden_dim <= 0:
+            raise ValueError(
+                "hidden_dim must be > 0."
+            )
+
+        if self.num_gnn_layers <= 0:
+            raise ValueError(
+                "num_gnn_layers must be > 0."
+            )
+
         if not (
-            0
+            0.0
             <= self.validation_fraction
-            < 1
+            < 1.0
         ):
             raise ValueError(
                 "validation_fraction must "
@@ -63,9 +79,9 @@ class TrainingConfig:
             )
 
         if not (
-            0
+            0.0
             <= self.test_fraction
-            < 1
+            < 1.0
         ):
             raise ValueError(
                 "test_fraction must "
@@ -75,7 +91,7 @@ class TrainingConfig:
         if (
             self.validation_fraction
             + self.test_fraction
-            >= 1
+            >= 1.0
         ):
             raise ValueError(
                 "validation_fraction + "
@@ -90,3 +106,15 @@ class TrainingConfig:
                 "split_group must be "
                 "'video' or 'track'."
             )
+
+        if self.num_workers < 0:
+            raise ValueError(
+                "num_workers must be >= 0."
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        """
+        Convert configuration to a plain dictionary.
+        """
+
+        return asdict(self)
