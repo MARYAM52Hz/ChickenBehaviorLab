@@ -1,106 +1,88 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from pathlib import Path
+from dataclasses import dataclass, field
+from typing import Any
 
 import torch
-from torch import Tensor, nn
+from torch import nn
 from torch.optim import Optimizer
 from torch_geometric.loader import DataLoader
 
-from chicken_behavior_lab.training.metrics import (
-    ClassificationMetrics,
-    compute_classification_metrics,
+from chicken_behavior_lab.training.checkpoint import (
+    save_checkpoint,
 )
-
-
-@dataclass(frozen=True, slots=True)
-class EpochResult:
-    """
-    Metrics collected for one epoch.
-    """
-
-    loss: float
-
-    accuracy: float
-
-    macro_precision: float
-
-    macro_recall: float
-
-    macro_f1: float
 
 
 @dataclass(slots=True)
 class TrainingHistory:
-    """
-    Complete training history.
-    """
 
-    train: list[EpochResult]
+    train_loss: list[float] = field(
+        default_factory=list
+    )
 
-    validation: list[EpochResult]
+    validation_loss: list[float] = field(
+        default_factory=list
+    )
 
-    best_epoch: int | None = None
+    validation_accuracy: list[float] = field(
+        default_factory=list
+    )
 
-    best_validation_f1: float | None = None
+    validation_macro_f1: list[float] = field(
+        default_factory=list
+    )
 
 
 class Trainer:
-    """
-    Training engine for ChickenBehaviorLab models.
-    """
 
     def __init__(
         self,
         model: nn.Module,
         optimizer: Optimizer,
-        loss_fn: nn.Module,
-        num_classes: int,
-        device: str | torch.device,
-        checkpoint_path: str | Path | None = None,
+        loss_function: nn.Module,
+        device: torch.device,
+        checkpoint_path: str,
+        model_config: dict[str, Any],
+        training_config: dict[str, Any],
+        label_to_index: dict[str, int],
     ) -> None:
-
-        if num_classes <= 1:
-            raise ValueError(
-                "num_classes must be greater than 1."
-            )
 
         self.model = model
 
         self.optimizer = optimizer
 
-        self.loss_fn = loss_fn
+        self.loss_function = loss_function
 
-        self.num_classes = (
-            num_classes
-        )
-
-        self.device = torch.device(
-            device
-        )
+        self.device = device
 
         self.checkpoint_path = (
-            Path(checkpoint_path)
-            if checkpoint_path is not None
-            else None
+            checkpoint_path
         )
 
-        self.model.to(
-            self.device
+        self.model_config = (
+            model_config
         )
 
-    # =====================================================
-    # Train epoch
-    # =====================================================
+        self.training_config = (
+            training_config
+        )
+
+        self.label_to_index = (
+            label_to_index
+        )
+
+        self.history = (
+            TrainingHistory()
+        )
+
+        self.best_validation_f1 = float(
+            "-inf"
+        )
 
     def train_epoch(
         self,
-        loader: DataLoader,
-    ) -> EpochResult:
-        """
-        Run one training epoch.
-        """
+        data_loader: DataLoader,
+    ) -> float:
 
         self.model.train()
 
@@ -108,11 +90,7 @@ class Trainer:
 
         total_samples = 0
 
-        all_predictions: list[Tensor] = []
-
-        all_targets: list[Tensor] = []
-
-        for batch in loader:
+        for batch in data_loader:
 
             batch = batch.to(
                 self.device
@@ -123,17 +101,14 @@ class Trainer:
             )
 
             logits = self.model(
-                x=batch.x,
-                edge_index=batch.edge_index,
-                edge_attr=batch.edge_attr,
-                batch=batch.batch,
+                batch
             )
 
             targets = batch.y.view(
                 -1
             )
 
-            loss = self.loss_fn(
+            loss = self.loss_function(
                 logits,
                 targets,
             )
@@ -143,7 +118,7 @@ class Trainer:
             self.optimizer.step()
 
             batch_size = (
-                targets.shape[0]
+                targets.size(0)
             )
 
             total_loss += (
@@ -155,39 +130,26 @@ class Trainer:
                 batch_size
             )
 
-            predictions = (
-                logits.argmax(
-                    dim=1
-                )
+        if total_samples == 0:
+            raise RuntimeError(
+                "Training DataLoader "
+                "returned no samples."
             )
 
-            all_predictions.append(
-                predictions.detach().cpu()
-            )
-
-            all_targets.append(
-                targets.detach().cpu()
-            )
-
-        return self._build_epoch_result(
-            total_loss=total_loss,
-            total_samples=total_samples,
-            predictions=all_predictions,
-            targets=all_targets,
+        return (
+            total_loss
+            / total_samples
         )
 
-    # =====================================================
-    # Validation
-    # =====================================================
-
     @torch.no_grad()
-    def evaluate(
+    def validate(
         self,
-        loader: DataLoader,
-    ) -> EpochResult:
-        """
-        Evaluate model without gradient computation.
-        """
+        data_loader: DataLoader,
+    ) -> tuple[
+        float,
+        float,
+        float,
+    ]:
 
         self.model.eval()
 
@@ -195,34 +157,38 @@ class Trainer:
 
         total_samples = 0
 
-        all_predictions: list[Tensor] = []
+        all_targets = []
 
-        all_targets: list[Tensor] = []
+        all_predictions = []
 
-        for batch in loader:
+        for batch in data_loader:
 
             batch = batch.to(
                 self.device
             )
 
             logits = self.model(
-                x=batch.x,
-                edge_index=batch.edge_index,
-                edge_attr=batch.edge_attr,
-                batch=batch.batch,
+                batch
             )
 
             targets = batch.y.view(
                 -1
             )
 
-            loss = self.loss_fn(
+            loss = self.loss_function(
                 logits,
                 targets,
             )
 
+            predictions = (
+                torch.argmax(
+                    logits,
+                    dim=-1,
+                )
+            )
+
             batch_size = (
-                targets.shape[0]
+                targets.size(0)
             )
 
             total_loss += (
@@ -234,30 +200,117 @@ class Trainer:
                 batch_size
             )
 
-            predictions = (
-                logits.argmax(
-                    dim=1
-                )
+            all_targets.append(
+                targets.detach().cpu()
             )
 
             all_predictions.append(
-                predictions.cpu()
+                predictions.detach().cpu()
             )
 
-            all_targets.append(
-                targets.cpu()
+        if total_samples == 0:
+            raise RuntimeError(
+                "Validation DataLoader "
+                "returned no samples."
             )
 
-        return self._build_epoch_result(
-            total_loss=total_loss,
-            total_samples=total_samples,
-            predictions=all_predictions,
-            targets=all_targets,
+        y_true = torch.cat(
+            all_targets
         )
 
-    # =====================================================
-    # Fit
-    # =====================================================
+        y_pred = torch.cat(
+            all_predictions
+        )
+
+        accuracy = float(
+            (
+                y_true == y_pred
+            ).float().mean().item()
+        )
+
+        num_classes = len(
+            self.label_to_index
+        )
+
+        confusion = torch.zeros(
+            (
+                num_classes,
+                num_classes,
+            ),
+            dtype=torch.long,
+        )
+
+        for true_label, predicted_label in zip(
+            y_true,
+            y_pred,
+        ):
+
+            confusion[
+                true_label,
+                predicted_label,
+            ] += 1
+
+        true_positive = torch.diag(
+            confusion
+        ).float()
+
+        predicted_positive = (
+            confusion.sum(
+                dim=0
+            ).float()
+        )
+
+        actual_positive = (
+            confusion.sum(
+                dim=1
+            ).float()
+        )
+
+        precision = torch.where(
+            predicted_positive > 0,
+            true_positive
+            / predicted_positive,
+            torch.zeros_like(
+                true_positive
+            ),
+        )
+
+        recall = torch.where(
+            actual_positive > 0,
+            true_positive
+            / actual_positive,
+            torch.zeros_like(
+                true_positive
+            ),
+        )
+
+        f1 = torch.where(
+            precision + recall > 0,
+            2
+            * precision
+            * recall
+            / (
+                precision + recall
+            ),
+            torch.zeros_like(
+                precision
+            ),
+        )
+
+        macro_f1 = float(
+            f1.mean().item()
+        )
+
+        validation_loss = (
+            total_loss
+            / total_samples
+        )
+
+        return (
+            validation_loss,
+            accuracy,
+            macro_f1,
+        )
 
     def fit(
         self,
@@ -265,262 +318,84 @@ class Trainer:
         validation_loader: DataLoader,
         epochs: int,
     ) -> TrainingHistory:
-        """
-        Train model for multiple epochs.
-
-        Best checkpoint is selected using validation
-        macro-F1 rather than validation accuracy.
-        """
-
-        if epochs <= 0:
-            raise ValueError(
-                "epochs must be positive."
-            )
-
-        history = TrainingHistory(
-            train=[],
-            validation=[],
-        )
-
-        best_f1 = float(
-            "-inf"
-        )
 
         for epoch in range(
             1,
             epochs + 1,
         ):
 
-            train_result = (
+            train_loss = (
                 self.train_epoch(
                     train_loader
                 )
             )
 
-            validation_result = (
-                self.evaluate(
-                    validation_loader
-                )
+            (
+                validation_loss,
+                validation_accuracy,
+                validation_f1,
+            ) = self.validate(
+                validation_loader
             )
 
-            history.train.append(
-                train_result
+            self.history.train_loss.append(
+                train_loss
             )
 
-            history.validation.append(
-                validation_result
+            self.history.validation_loss.append(
+                validation_loss
+            )
+
+            self.history.validation_accuracy.append(
+                validation_accuracy
+            )
+
+            self.history.validation_macro_f1.append(
+                validation_f1
             )
 
             print(
-                self._format_epoch(
-                    epoch=epoch,
-                    epochs=epochs,
-                    train_result=train_result,
-                    validation_result=(
-                        validation_result
-                    ),
-                )
+                f"Epoch {epoch:03d}/{epochs:03d} | "
+                f"Train Loss: {train_loss:.4f} | "
+                f"Val Loss: {validation_loss:.4f} | "
+                f"Val Acc: {validation_accuracy:.4f} | "
+                f"Val F1: {validation_f1:.4f}"
             )
 
             if (
-                validation_result.macro_f1
-                > best_f1
+                validation_f1
+                > self.best_validation_f1
             ):
 
-                best_f1 = (
-                    validation_result.macro_f1
+                self.best_validation_f1 = (
+                    validation_f1
                 )
 
-                history.best_epoch = (
-                    epoch
-                )
-
-                history.best_validation_f1 = (
-                    best_f1
-                )
-
-                self.save_checkpoint(
+                save_checkpoint(
+                    path=self.checkpoint_path,
+                    model=self.model,
+                    optimizer=self.optimizer,
                     epoch=epoch,
-                    validation_result=(
-                        validation_result
+                    train_loss=train_loss,
+                    validation_loss=(
+                        validation_loss
+                    ),
+                    validation_f1=(
+                        validation_f1
+                    ),
+                    model_config=(
+                        self.model_config
+                    ),
+                    training_config=(
+                        self.training_config
+                    ),
+                    label_to_index=(
+                        self.label_to_index
                     ),
                 )
 
-        return history
+                print(
+                    "  ✓ Best checkpoint saved."
+                )
 
-    # =====================================================
-    # Metrics helper
-    # =====================================================
-
-    def _build_epoch_result(
-        self,
-        total_loss: float,
-        total_samples: int,
-        predictions: list[Tensor],
-        targets: list[Tensor],
-    ) -> EpochResult:
-
-        if total_samples == 0:
-            raise ValueError(
-                "DataLoader contains no samples."
-            )
-
-        prediction_tensor = torch.cat(
-            predictions
-        )
-
-        target_tensor = torch.cat(
-            targets
-        )
-
-        metrics: ClassificationMetrics = (
-            compute_classification_metrics(
-                predictions=prediction_tensor,
-                targets=target_tensor,
-                num_classes=self.num_classes,
-            )
-        )
-
-        average_loss = (
-            total_loss
-            / total_samples
-        )
-
-        return EpochResult(
-            loss=float(
-                average_loss
-            ),
-            accuracy=metrics.accuracy,
-            macro_precision=(
-                metrics.macro_precision
-            ),
-            macro_recall=(
-                metrics.macro_recall
-            ),
-            macro_f1=(
-                metrics.macro_f1
-            ),
-        )
-
-    # =====================================================
-    # Checkpoint
-    # =====================================================
-
-    def save_checkpoint(
-        self,
-        epoch: int,
-        validation_result: EpochResult,
-    ) -> None:
-        """
-        Save the current model if checkpointing
-        is enabled.
-        """
-
-        if self.checkpoint_path is None:
-            return
-
-        self.checkpoint_path.parent.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
-
-        checkpoint = {
-            "epoch": epoch,
-            "model_state_dict": (
-                self.model.state_dict()
-            ),
-            "optimizer_state_dict": (
-                self.optimizer.state_dict()
-            ),
-            "validation_loss": (
-                validation_result.loss
-            ),
-            "validation_accuracy": (
-                validation_result.accuracy
-            ),
-            "validation_macro_f1": (
-                validation_result.macro_f1
-            ),
-            "num_classes": (
-                self.num_classes
-            ),
-        }
-
-        torch.save(
-            checkpoint,
-            self.checkpoint_path,
-        )
-
-    # =====================================================
-    # Load checkpoint
-    # =====================================================
-
-    def load_checkpoint(
-        self,
-        path: str | Path | None = None,
-    ) -> dict:
-
-        checkpoint_path = (
-            Path(path)
-            if path is not None
-            else self.checkpoint_path
-        )
-
-        if checkpoint_path is None:
-            raise ValueError(
-                "No checkpoint path provided."
-            )
-
-        if not checkpoint_path.exists():
-            raise FileNotFoundError(
-                f"Checkpoint not found: "
-                f"{checkpoint_path}"
-            )
-
-        checkpoint = torch.load(
-            checkpoint_path,
-            map_location=self.device,
-            weights_only=False,
-        )
-
-        self.model.load_state_dict(
-            checkpoint[
-                "model_state_dict"
-            ]
-        )
-
-        self.optimizer.load_state_dict(
-            checkpoint[
-                "optimizer_state_dict"
-            ]
-        )
-
-        return checkpoint
-
-    # =====================================================
-    # Logging
-    # =====================================================
-
-    @staticmethod
-    def _format_epoch(
-        epoch: int,
-        epochs: int,
-        train_result: EpochResult,
-        validation_result: EpochResult,
-    ) -> str:
-
-        return (
-            f"Epoch {epoch:03d}/{epochs:03d} | "
-            f"Train Loss: "
-            f"{train_result.loss:.4f} | "
-            f"Train Acc: "
-            f"{train_result.accuracy:.4f} | "
-            f"Train F1: "
-            f"{train_result.macro_f1:.4f} | "
-            f"Val Loss: "
-            f"{validation_result.loss:.4f} | "
-            f"Val Acc: "
-            f"{validation_result.accuracy:.4f} | "
-            f"Val F1: "
-            f"{validation_result.macro_f1:.4f}"
-        )
+        return self.history
