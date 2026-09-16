@@ -1,129 +1,180 @@
 from __future__ import annotations
 
-from typing import Mapping, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 import torch
-from torch_geometric.data import (
-    Data,
-    Dataset,
-)
+from torch_geometric.data import Data
 
-from chicken_behavior_lab.dataset.sample import (
-    GraphSample,
-)
+from chicken_behavior_lab.dataset.sample import GraphSample
 
 
-class PyGGraphDataset(Dataset):
+class PyGGraphDataset:
     """
-    PyTorch Geometric dataset for
-    ChickenBehaviorLab.
+    Adapter between ChickenBehaviorLab GraphSample objects
+    and PyTorch Geometric Data objects.
+
+    The class deliberately keeps sample metadata as explicit
+    Data attributes instead of passing arbitrary dictionaries
+    through PyG batching.
     """
 
     def __init__(
         self,
         samples: Sequence[GraphSample],
-        label_to_index: Mapping[
-            str,
-            int,
-        ] | None = None,
     ) -> None:
+        self.samples = list(samples)
+        self._validate()
 
-        super().__init__()
+        self.label_to_index = self._build_label_mapping()
 
-        self.samples = list(
-            samples
-        )
+    def _validate(self) -> None:
+        sample_ids: set[str] = set()
 
-        if label_to_index is None:
-
-            labels = sorted(
-                {
-                    sample.label
-                    for sample in self.samples
-                }
-            )
-
-            self.label_to_index = {
-                label: index
-                for index, label in enumerate(
-                    labels
+        for sample in self.samples:
+            if not isinstance(
+                sample,
+                GraphSample,
+            ):
+                raise TypeError(
+                    "Every item must be a GraphSample."
                 )
-            }
 
-        else:
+            sample.validate()
 
-            self.label_to_index = dict(
-                label_to_index
+            if sample.sample_id in sample_ids:
+                raise ValueError(
+                    f"Duplicate sample_id: "
+                    f"{sample.sample_id}"
+                )
+
+            sample_ids.add(sample.sample_id)
+
+    def _build_label_mapping(
+        self,
+    ) -> dict[str, int]:
+        mapping: dict[str, int] = {}
+
+        for sample in self.samples:
+            if sample.behavior_id in mapping:
+                expected = mapping[
+                    sample.behavior_id
+                ]
+
+                if expected != sample.label:
+                    raise ValueError(
+                        "Inconsistent label mapping for "
+                        f"behavior '{sample.behavior_id}': "
+                        f"expected {expected}, "
+                        f"found {sample.label}."
+                    )
+            else:
+                mapping[
+                    sample.behavior_id
+                ] = sample.label
+
+        return dict(
+            sorted(
+                mapping.items(),
+                key=lambda item: item[1],
             )
-
-        self.index_to_label = {
-            index: label
-            for label, index
-            in self.label_to_index.items()
-        }
-
-        unknown_labels = {
-            sample.label
-            for sample in self.samples
-            if sample.label
-            not in self.label_to_index
-        }
-
-        if unknown_labels:
-
-            raise ValueError(
-                "Dataset contains labels that "
-                "are not present in the shared "
-                f"label mapping: {unknown_labels}"
-            )
-
-    @property
-    def labels(self) -> list[str]:
-
-        return list(
-            self.label_to_index.keys()
         )
 
-    def len(self) -> int:
-        return len(
-            self.samples
-        )
+    def __len__(self) -> int:
+        return len(self.samples)
 
-    def get(
+    def __getitem__(
         self,
         index: int,
     ) -> Data:
+        sample = self.samples[index]
 
-        sample = self.samples[
-            index
-        ]
+        graph = sample.graph
 
-        label_index = (
-            self.label_to_index[
-                sample.label
-            ]
+        graph.validate()
+
+        metadata = sample.metadata or {}
+
+        video_id = str(
+            metadata.get(
+                "video_id",
+                "",
+            )
+        )
+
+        track_id = int(
+            metadata.get(
+                "track_id",
+                -1,
+            )
+        )
+
+        start_frame = int(
+            metadata.get(
+                "start_frame",
+                0,
+            )
+        )
+
+        end_frame = int(
+            metadata.get(
+                "end_frame",
+                start_frame,
+            )
         )
 
         data = Data(
-            x=sample.node_features,
-            edge_index=sample.edge_index,
-            edge_attr=sample.edge_features,
+            x=torch.as_tensor(
+                graph.node_features,
+                dtype=torch.float32,
+            ),
+            edge_index=torch.as_tensor(
+                graph.edge_index,
+                dtype=torch.long,
+            ),
             y=torch.tensor(
-                [label_index],
+                [sample.label],
                 dtype=torch.long,
             ),
         )
 
-        data.sample_id = (
-            sample.sample_id
-        )
+        if graph.edge_features is not None:
+            data.edge_attr = torch.as_tensor(
+                graph.edge_features,
+                dtype=torch.float32,
+            )
 
-        data.video_id = (
-            sample.video_id
-        )
-
-        data.track_id = (
-            sample.track_id
-        )
+        # Explicit sample metadata.
+        data.sample_id = sample.sample_id
+        data.video_id = video_id
+        data.track_id = track_id
+        data.start_frame = start_frame
+        data.end_frame = end_frame
+        data.behavior_id = sample.behavior_id
 
         return data
+
+    @property
+    def samples_metadata(
+        self,
+    ) -> list[dict[str, Any]]:
+        metadata_list = []
+
+        for sample in self.samples:
+            metadata = dict(
+                sample.metadata or {}
+            )
+
+            metadata["sample_id"] = (
+                sample.sample_id
+            )
+            metadata["behavior_id"] = (
+                sample.behavior_id
+            )
+            metadata["label"] = int(
+                sample.label
+            )
+
+            metadata_list.append(metadata)
+
+        return metadata_list
