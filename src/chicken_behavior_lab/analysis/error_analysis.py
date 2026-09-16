@@ -23,7 +23,10 @@ class PredictionRecord:
 
     @property
     def is_correct(self) -> bool:
-        return self.true_behavior == self.predicted_behavior
+        return (
+            self.true_behavior
+            == self.predicted_behavior
+        )
 
     @property
     def is_error(self) -> bool:
@@ -31,27 +34,40 @@ class PredictionRecord:
 
     def validate(self) -> None:
         if not self.sample_id:
-            raise ValueError("sample_id cannot be empty.")
+            raise ValueError(
+                "sample_id cannot be empty."
+            )
 
         if not self.video_id:
-            raise ValueError("video_id cannot be empty.")
+            raise ValueError(
+                "video_id cannot be empty."
+            )
 
         if self.track_id < 0:
-            raise ValueError("track_id cannot be negative.")
+            raise ValueError(
+                "track_id cannot be negative."
+            )
 
         if self.start_frame < 0:
-            raise ValueError("start_frame cannot be negative.")
+            raise ValueError(
+                "start_frame cannot be negative."
+            )
 
         if self.end_frame < self.start_frame:
             raise ValueError(
-                "end_frame must be greater than or equal to start_frame."
+                "end_frame must be greater than "
+                "or equal to start_frame."
             )
 
         if not self.true_behavior:
-            raise ValueError("true_behavior cannot be empty.")
+            raise ValueError(
+                "true_behavior cannot be empty."
+            )
 
         if not self.predicted_behavior:
-            raise ValueError("predicted_behavior cannot be empty.")
+            raise ValueError(
+                "predicted_behavior cannot be empty."
+            )
 
         if not 0.0 <= self.confidence <= 1.0:
             raise ValueError(
@@ -62,6 +78,7 @@ class PredictionRecord:
         self.validate()
 
         data = asdict(self)
+
         data["is_correct"] = self.is_correct
         data["is_error"] = self.is_error
 
@@ -70,7 +87,7 @@ class PredictionRecord:
 
 class PredictionErrorAnalyzer:
     """
-    Analyze per-sample model predictions and classification errors.
+    Analyze per-sample model predictions and errors.
     """
 
     def __init__(
@@ -89,23 +106,117 @@ class PredictionErrorAnalyzer:
                 PredictionRecord,
             ):
                 raise TypeError(
-                    "Every prediction must be a PredictionRecord."
+                    "Every prediction must be a "
+                    "PredictionRecord."
                 )
 
             prediction.validate()
 
             if prediction.sample_id in sample_ids:
                 raise ValueError(
-                    f"Duplicate sample_id: {prediction.sample_id}"
+                    f"Duplicate sample_id: "
+                    f"{prediction.sample_id}"
                 )
 
-            sample_ids.add(prediction.sample_id)
+            sample_ids.add(
+                prediction.sample_id
+            )
+
+    @classmethod
+    def from_evaluation_result(
+        cls,
+        evaluation_result,
+        index_to_label: dict[int, str],
+    ) -> "PredictionErrorAnalyzer":
+        """
+        Convert integer class predictions into canonical
+        behavior IDs.
+        """
+
+        if not hasattr(
+            evaluation_result,
+            "prediction_records",
+        ):
+            raise ValueError(
+                "EvaluationResult does not contain "
+                "prediction_records."
+            )
+
+        records: list[PredictionRecord] = []
+
+        if len(
+            evaluation_result.prediction_records
+        ) != len(evaluation_result.y_true):
+            raise ValueError(
+                "Prediction record count does not match "
+                "evaluation target count."
+            )
+
+        for index, raw_record in enumerate(
+            evaluation_result.prediction_records
+        ):
+            true_index = int(
+                evaluation_result.y_true[index]
+            )
+
+            predicted_index = int(
+                evaluation_result.y_pred[index]
+            )
+
+            if true_index not in index_to_label:
+                raise KeyError(
+                    f"Unknown true class index: "
+                    f"{true_index}"
+                )
+
+            if predicted_index not in index_to_label:
+                raise KeyError(
+                    "Unknown predicted class index: "
+                    f"{predicted_index}"
+                )
+
+            records.append(
+                PredictionRecord(
+                    sample_id=raw_record.sample_id,
+                    video_id=raw_record.video_id,
+                    track_id=raw_record.track_id,
+                    start_frame=raw_record.start_frame,
+                    end_frame=raw_record.end_frame,
+                    true_behavior=index_to_label[
+                        true_index
+                    ],
+                    predicted_behavior=index_to_label[
+                        predicted_index
+                    ],
+                    confidence=raw_record.confidence,
+                )
+            )
+
+        return cls(records)
+
+    def _validate(self) -> None:
+        sample_ids: set[str] = set()
+
+        for prediction in self.predictions:
+            prediction.validate()
+
+            if prediction.sample_id in sample_ids:
+                raise ValueError(
+                    f"Duplicate sample_id: "
+                    f"{prediction.sample_id}"
+                )
+
+            sample_ids.add(
+                prediction.sample_id
+            )
 
     def __len__(self) -> int:
         return len(self.predictions)
 
     @property
-    def errors(self) -> list[PredictionRecord]:
+    def errors(
+        self,
+    ) -> list[PredictionRecord]:
         return [
             prediction
             for prediction in self.predictions
@@ -113,7 +224,9 @@ class PredictionErrorAnalyzer:
         ]
 
     @property
-    def correct_predictions(self) -> list[PredictionRecord]:
+    def correct_predictions(
+        self,
+    ) -> list[PredictionRecord]:
         return [
             prediction
             for prediction in self.predictions
@@ -124,16 +237,18 @@ class PredictionErrorAnalyzer:
         if not self.predictions:
             return 0.0
 
-        return len(self.correct_predictions) / len(
-            self.predictions
+        return (
+            len(self.correct_predictions)
+            / len(self.predictions)
         )
 
     def error_rate(self) -> float:
         if not self.predictions:
             return 0.0
 
-        return len(self.errors) / len(
-            self.predictions
+        return (
+            len(self.errors)
+            / len(self.predictions)
         )
 
     def low_confidence_errors(
@@ -169,11 +284,10 @@ class PredictionErrorAnalyzer:
     def confusion_pairs(
         self,
     ) -> list[dict[str, Any]]:
-        """
-        Count true/predicted behavior pairs among errors.
-        """
-
-        pair_counts: dict[tuple[str, str], int] = {}
+        pair_counts: dict[
+            tuple[str, str],
+            int,
+        ] = {}
 
         for prediction in self.errors:
             pair = (
@@ -207,10 +321,6 @@ class PredictionErrorAnalyzer:
     def error_rate_by_true_behavior(
         self,
     ) -> list[dict[str, Any]]:
-        """
-        Calculate error rate separately for each true behavior.
-        """
-
         totals: dict[str, int] = {}
         errors: dict[str, int] = {}
 
@@ -229,14 +339,19 @@ class PredictionErrorAnalyzer:
         results = []
 
         for behavior, total in totals.items():
-            error_count = errors.get(behavior, 0)
+            error_count = errors.get(
+                behavior,
+                0,
+            )
 
             results.append(
                 {
                     "behavior": behavior,
                     "total": total,
                     "errors": error_count,
-                    "error_rate": error_count / total,
+                    "error_rate": (
+                        error_count / total
+                    ),
                 }
             )
 
@@ -249,11 +364,15 @@ class PredictionErrorAnalyzer:
 
     def summary(self) -> dict[str, Any]:
         return {
-            "num_predictions": len(self.predictions),
+            "num_predictions": len(
+                self.predictions
+            ),
             "num_correct": len(
                 self.correct_predictions
             ),
-            "num_errors": len(self.errors),
+            "num_errors": len(
+                self.errors
+            ),
             "accuracy": self.accuracy(),
             "error_rate": self.error_rate(),
             "num_low_confidence_errors": len(
@@ -324,23 +443,33 @@ class PredictionErrorAnalyzer:
         predictions = []
 
         for item in data["predictions"]:
-            prediction = PredictionRecord(
-                sample_id=str(item["sample_id"]),
-                video_id=str(item["video_id"]),
-                track_id=int(item["track_id"]),
-                start_frame=int(item["start_frame"]),
-                end_frame=int(item["end_frame"]),
-                true_behavior=str(
-                    item["true_behavior"]
-                ),
-                predicted_behavior=str(
-                    item["predicted_behavior"]
-                ),
-                confidence=float(
-                    item["confidence"]
-                ),
+            predictions.append(
+                PredictionRecord(
+                    sample_id=str(
+                        item["sample_id"]
+                    ),
+                    video_id=str(
+                        item["video_id"]
+                    ),
+                    track_id=int(
+                        item["track_id"]
+                    ),
+                    start_frame=int(
+                        item["start_frame"]
+                    ),
+                    end_frame=int(
+                        item["end_frame"]
+                    ),
+                    true_behavior=str(
+                        item["true_behavior"]
+                    ),
+                    predicted_behavior=str(
+                        item["predicted_behavior"]
+                    ),
+                    confidence=float(
+                        item["confidence"]
+                    ),
+                )
             )
-
-            predictions.append(prediction)
 
         return cls(predictions)
