@@ -50,7 +50,7 @@ def make_predictions():
 
 
 def test_prediction_record_correctness():
-    correct = PredictionRecord(
+    prediction = PredictionRecord(
         sample_id="sample_001",
         video_id="video_001",
         track_id=1,
@@ -61,12 +61,12 @@ def test_prediction_record_correctness():
         confidence=0.90,
     )
 
-    assert correct.is_correct
-    assert not correct.is_error
+    assert prediction.is_correct
+    assert not prediction.is_error
 
 
 def test_prediction_record_error():
-    error = PredictionRecord(
+    prediction = PredictionRecord(
         sample_id="sample_001",
         video_id="video_001",
         track_id=1,
@@ -77,8 +77,8 @@ def test_prediction_record_error():
         confidence=0.60,
     )
 
-    assert not error.is_correct
-    assert error.is_error
+    assert not prediction.is_correct
+    assert prediction.is_error
 
 
 def test_accuracy_and_error_rate():
@@ -88,6 +88,7 @@ def test_accuracy_and_error_rate():
 
     assert len(analyzer) == 4
     assert len(analyzer.errors) == 2
+
     assert analyzer.accuracy() == 0.5
     assert analyzer.error_rate() == 0.5
 
@@ -97,12 +98,17 @@ def test_low_confidence_errors():
         make_predictions()
     )
 
-    errors = analyzer.low_confidence_errors(
-        threshold=0.70
+    errors = (
+        analyzer.low_confidence_errors(
+            threshold=0.70
+        )
     )
 
     assert len(errors) == 1
-    assert errors[0].sample_id == "sample_002"
+    assert (
+        errors[0].sample_id
+        == "sample_002"
+    )
 
 
 def test_high_confidence_errors():
@@ -110,12 +116,17 @@ def test_high_confidence_errors():
         make_predictions()
     )
 
-    errors = analyzer.high_confidence_errors(
-        threshold=0.80
+    errors = (
+        analyzer.high_confidence_errors(
+            threshold=0.80
+        )
     )
 
     assert len(errors) == 1
-    assert errors[0].sample_id == "sample_003"
+    assert (
+        errors[0].sample_id
+        == "sample_003"
+    )
 
 
 def test_confusion_pairs():
@@ -125,8 +136,18 @@ def test_confusion_pairs():
 
     pairs = analyzer.confusion_pairs()
 
-    assert pairs[0]["true_behavior"] == "feeding"
-    assert pairs[0]["predicted_behavior"] == "standing"
+    assert len(pairs) == 2
+
+    assert (
+        pairs[0]["true_behavior"]
+        == "feeding"
+    )
+
+    assert (
+        pairs[0]["predicted_behavior"]
+        == "standing"
+    )
+
     assert pairs[0]["count"] == 1
 
 
@@ -135,7 +156,9 @@ def test_error_rate_by_behavior():
         make_predictions()
     )
 
-    results = analyzer.error_rate_by_true_behavior()
+    results = (
+        analyzer.error_rate_by_true_behavior()
+    )
 
     feeding = next(
         item
@@ -169,17 +192,22 @@ def test_error_rate_by_behavior():
 
 
 def test_save_and_load_json(tmp_path):
-    predictions = make_predictions()
-
     analyzer = PredictionErrorAnalyzer(
-        predictions
+        make_predictions()
     )
 
-    path = tmp_path / "prediction_errors.json"
+    path = (
+        tmp_path
+        / "prediction_errors.json"
+    )
 
     analyzer.save_json(path)
 
-    loaded = PredictionErrorAnalyzer.load_json(path)
+    loaded = (
+        PredictionErrorAnalyzer.load_json(
+            path
+        )
+    )
 
     assert len(loaded) == 4
     assert loaded.accuracy() == 0.5
