@@ -22,6 +22,10 @@ from chicken_behavior_lab.dataset.temporal_builder import (
     TemporalSequenceBuilder,
 )
 
+from chicken_behavior_lab.dataset.temporal_pyg_dataset import (
+    TemporalPyGDataset,
+)
+
 
 __all__ = [
     "GraphSample",
@@ -30,4 +34,5 @@ __all__ = [
     "TemporalGraphSample",
     "TemporalGraphDataset",
     "TemporalSequenceBuilder",
+    "TemporalPyGDataset",
 ]
