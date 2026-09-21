@@ -26,6 +26,15 @@ from chicken_behavior_lab.dataset.temporal_pyg_dataset import (
     TemporalPyGDataset,
 )
 
+from chicken_behavior_lab.dataset.temporal_batch import (
+    TemporalBatch,
+)
+
+from chicken_behavior_lab.dataset.temporal_collate import (
+    TemporalCollator,
+    make_temporal_dataloader,
+)
+
 
 __all__ = [
     "GraphSample",
@@ -35,4 +44,7 @@ __all__ = [
     "TemporalGraphDataset",
     "TemporalSequenceBuilder",
     "TemporalPyGDataset",
+    "TemporalBatch",
+    "TemporalCollator",
+    "make_temporal_dataloader",
 ]
