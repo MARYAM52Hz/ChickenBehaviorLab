@@ -2,8 +2,17 @@ from chicken_behavior_lab.models.spatial_encoder import (
     SpatialGraphEncoder,
 )
 
-# Keep existing exports here.
-# For example:
+from chicken_behavior_lab.models.temporal_encoder import (
+    GRUTemporalEncoder,
+)
+
+from chicken_behavior_lab.models.temporal_behavior_gnn import (
+    TemporalBehaviorGNN,
+)
+
+# Keep the existing baseline model import.
+#
+# Example:
 #
 # from chicken_behavior_lab.models.chicken_behavior_gnn import (
 #     ChickenBehaviorGNN,
@@ -12,4 +21,6 @@ from chicken_behavior_lab.models.spatial_encoder import (
 
 __all__ = [
     "SpatialGraphEncoder",
+    "GRUTemporalEncoder",
+    "TemporalBehaviorGNN",
 ]
