@@ -1,17 +1,26 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import torch
 
-from chicken_behavior_lab.dataset.temporal_batch import TemporalBatch
+from chicken_behavior_lab.dataset.temporal_batch import (
+    TemporalBatch,
+)
+
 from chicken_behavior_lab.training.temporal_evaluator import (
     TemporalEvaluator,
 )
 
 
 class DummyTemporalModel(torch.nn.Module):
-    def forward(self, batch: TemporalBatch) -> torch.Tensor:
+    """
+    Minimal deterministic model used only for testing
+    the evaluator.
+    """
+
+    def forward(
+        self,
+        batch: TemporalBatch,
+    ) -> torch.Tensor:
         batch_size = batch.batch_size
 
         logits = torch.zeros(
@@ -20,7 +29,7 @@ class DummyTemporalModel(torch.nn.Module):
             device=batch.x.device,
         )
 
-        # Predict class 0 for every sample.
+        # Always predict class 0.
         logits[:, 0] = 5.0
 
         return logits
@@ -28,7 +37,12 @@ class DummyTemporalModel(torch.nn.Module):
 
 def make_batch() -> TemporalBatch:
     return TemporalBatch(
-        x=torch.randn(2, 4, 13, 8),
+        x=torch.randn(
+            2,
+            4,
+            13,
+            8,
+        ),
         edge_index=torch.tensor(
             [
                 [0, 1],
@@ -85,15 +99,20 @@ def test_temporal_evaluator() -> None:
         def __iter__(self):
             yield make_batch()
 
-    result = evaluator.evaluate(DummyLoader())
+    result = evaluator.evaluate(
+        DummyLoader()
+    )
 
     assert result.y_true == [0, 1]
     assert result.y_pred == [0, 0]
 
     assert result.metrics["num_samples"] == 2
+
     assert result.metrics["accuracy"] == 0.5
 
-    assert len(result.prediction_records) == 2
+    assert len(
+        result.prediction_records
+    ) == 2
 
     first = result.prediction_records[0]
 
@@ -102,5 +121,66 @@ def test_temporal_evaluator() -> None:
     assert first.track_id == 10
     assert first.start_frame == 100
     assert first.end_frame == 103
+
     assert first.true_index == 0
     assert first.predicted_index == 0
+
+
+def test_temporal_evaluator_confusion_matrix() -> None:
+    model = DummyTemporalModel()
+
+    evaluator = TemporalEvaluator(
+        model=model,
+        device="cpu",
+        index_to_label={
+            0: "feeding",
+            1: "walking",
+            2: "standing",
+        },
+    )
+
+    class DummyLoader:
+        def __iter__(self):
+            yield make_batch()
+
+    result = evaluator.evaluate(
+        DummyLoader()
+    )
+
+    confusion = result.metrics[
+        "confusion_matrix"
+    ]
+
+    assert confusion == [
+        [1, 0],
+        [1, 0],
+    ]
+
+
+def test_temporal_evaluator_label_names() -> None:
+    model = DummyTemporalModel()
+
+    evaluator = TemporalEvaluator(
+        model=model,
+        device="cpu",
+        index_to_label={
+            0: "feeding",
+            1: "walking",
+            2: "standing",
+        },
+    )
+
+    class DummyLoader:
+        def __iter__(self):
+            yield make_batch()
+
+    result = evaluator.evaluate(
+        DummyLoader()
+    )
+
+    assert result.metrics[
+        "label_names"
+    ] == [
+        "feeding",
+        "walking",
+    ]
