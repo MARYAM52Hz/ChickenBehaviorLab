@@ -10,17 +10,18 @@ from chicken_behavior_lab.models.temporal_behavior_gnn import (
     TemporalBehaviorGNN,
 )
 
-# Keep the existing baseline model import.
-#
-# Example:
-#
-# from chicken_behavior_lab.models.chicken_behavior_gnn import (
-#     ChickenBehaviorGNN,
-# )
+from chicken_behavior_lab.models.model_factory import (
+    build_model,
+)
 
+from chicken_behavior_lab.models.chicken_behavior_gnn import (
+    ChickenBehaviorGNN,
+)
 
 __all__ = [
+    "ChickenBehaviorGNN",
     "SpatialGraphEncoder",
     "GRUTemporalEncoder",
     "TemporalBehaviorGNN",
+    "build_model",
 ]
