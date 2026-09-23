@@ -1,225 +1,352 @@
 from __future__ import annotations
 
-import random
 from dataclasses import dataclass
-from typing import Sequence
-
-from chicken_behavior_lab.dataset.sample import (
-    GraphSample,
-)
+from typing import Iterable
 
 
 @dataclass(slots=True)
-class DatasetSplit:
+class SplitGroups:
     """
-    Container for train, validation and test samples.
-    """
+    Group-level train/validation/test split.
 
-    train: list[GraphSample]
-
-    validation: list[GraphSample]
-
-    test: list[GraphSample]
-
-
-def _group_samples(
-    samples: Sequence[GraphSample],
-    group_by: str,
-) -> dict[str, list[GraphSample]]:
-    """
-    Group samples by video_id or track_id.
+    The values stored here are group identifiers, not
+    individual samples.
     """
 
-    groups: dict[
-        str,
-        list[GraphSample],
-    ] = {}
+    train: list[str]
+    validation: list[str]
+    test: list[str]
+
+    def validate(self) -> None:
+        train = set(self.train)
+        validation = set(self.validation)
+        test = set(self.test)
+
+        if train & validation:
+            raise ValueError(
+                "Train and validation groups overlap."
+            )
+
+        if train & test:
+            raise ValueError(
+                "Train and test groups overlap."
+            )
+
+        if validation & test:
+            raise ValueError(
+                "Validation and test groups overlap."
+            )
+
+        if not train:
+            raise ValueError(
+                "Train split cannot be empty."
+            )
+
+        if not validation:
+            raise ValueError(
+                "Validation split cannot be empty."
+            )
+
+        if not test:
+            raise ValueError(
+                "Test split cannot be empty."
+            )
+
+
+def normalize_group_id(
+    value: object,
+) -> str:
+    """
+    Convert a group identifier to a stable string.
+    """
+
+    if value is None:
+        raise ValueError(
+            "Group identifier cannot be None."
+        )
+
+    value = str(value).strip()
+
+    if not value:
+        raise ValueError(
+            "Group identifier cannot be empty."
+        )
+
+    return value
+
+
+def collect_groups(
+    samples: Iterable,
+    group_key: str,
+) -> list[str]:
+    """
+    Collect unique group IDs from dataset samples.
+
+    Supported sample metadata layouts:
+
+        sample.metadata[group_key]
+
+    or:
+
+        sample.<group_key>
+    """
+
+    groups: set[str] = set()
 
     for sample in samples:
+        metadata = getattr(
+            sample,
+            "metadata",
+            None,
+        )
 
-        if group_by == "video":
+        value = None
 
-            group_id = sample.video_id
-
-        elif group_by == "track":
-
-            group_id = (
-                f"{sample.video_id}::"
-                f"{sample.track_id}"
+        if isinstance(metadata, dict):
+            value = metadata.get(
+                group_key
             )
 
-        else:
+        if value is None:
+            value = getattr(
+                sample,
+                group_key,
+                None,
+            )
 
+        if value is None:
             raise ValueError(
-                "group_by must be either "
-                "'video' or 'track'."
+                f"Could not find group key "
+                f"'{group_key}' in sample."
             )
 
-        groups.setdefault(
-            group_id,
-            [],
-        ).append(sample)
+        groups.add(
+            normalize_group_id(value)
+        )
 
-    return groups
+    return sorted(groups)
 
 
-def group_train_validation_test_split(
-    samples: Sequence[GraphSample],
-    validation_fraction: float = 0.2,
-    test_fraction: float = 0.2,
-    group_by: str = "video",
-    random_seed: int = 42,
-) -> DatasetSplit:
+def build_group_id(
+    sample,
+    group_by: str,
+) -> str:
     """
-    Split samples without allowing samples from
-    the same group to appear in multiple splits.
+    Build a group identifier for one sample.
 
-    Parameters
-    ----------
-    samples:
-        Input graph samples.
+    Supported values:
 
-    validation_fraction:
-        Fraction of groups assigned to validation.
-
-    test_fraction:
-        Fraction of groups assigned to test.
-
-    group_by:
-        'video' or 'track'.
-
-    random_seed:
-        Reproducibility seed.
+        video
+        track
+        video_track
     """
 
-    if not 0.0 <= validation_fraction < 1.0:
-        raise ValueError(
-            "validation_fraction must be "
-            "between 0 and 1."
-        )
-
-    if not 0.0 <= test_fraction < 1.0:
-        raise ValueError(
-            "test_fraction must be "
-            "between 0 and 1."
-        )
-
-    if (
-        validation_fraction
-        + test_fraction
-        >= 1.0
-    ):
-        raise ValueError(
-            "validation_fraction + "
-            "test_fraction must be < 1."
-        )
-
-    if len(samples) == 0:
-        raise ValueError(
-            "Cannot split an empty dataset."
-        )
-
-    groups = _group_samples(
-        samples,
-        group_by=group_by,
+    metadata = getattr(
+        sample,
+        "metadata",
+        None,
     )
 
-    group_ids = list(
-        groups.keys()
-    )
+    if not isinstance(metadata, dict):
+        metadata = {}
 
-    rng = random.Random(
-        random_seed
-    )
-
-    rng.shuffle(group_ids)
-
-    num_groups = len(group_ids)
-
-    if num_groups < 3:
-        raise ValueError(
-            "At least 3 groups are required "
-            "for train/validation/test splitting."
-        )
-
-    num_test = max(
-        1,
-        round(
-            num_groups
-            * test_fraction
+    video_id = metadata.get(
+        "video_id",
+        getattr(
+            sample,
+            "video_id",
+            None,
         ),
     )
 
-    num_validation = max(
-        1,
-        round(
-            num_groups
-            * validation_fraction
+    track_id = metadata.get(
+        "track_id",
+        getattr(
+            sample,
+            "track_id",
+            None,
         ),
     )
 
-    # Make sure train remains non-empty.
-    while (
-        num_test
-        + num_validation
-        >= num_groups
-    ):
+    if group_by == "video":
+        return normalize_group_id(
+            video_id
+        )
 
-        if num_validation > 1:
-            num_validation -= 1
+    if group_by == "track":
+        return normalize_group_id(
+            track_id
+        )
 
-        elif num_test > 1:
-            num_test -= 1
+    if group_by == "video_track":
+        video = normalize_group_id(
+            video_id
+        )
 
+        track = normalize_group_id(
+            track_id
+        )
+
+        return f"{video}::track_{track}"
+
+    raise ValueError(
+        "group_by must be one of: "
+        "'video', 'track', 'video_track'."
+    )
+
+
+def collect_group_ids(
+    samples: Iterable,
+    group_by: str,
+) -> list[str]:
+    """
+    Collect unique group IDs using the requested grouping rule.
+    """
+
+    groups = set()
+
+    for sample in samples:
+        groups.add(
+            build_group_id(
+                sample,
+                group_by=group_by,
+            )
+        )
+
+    return sorted(groups)
+
+
+def validate_group_split(
+    split: SplitGroups,
+) -> None:
+    """
+    Validate that no group appears in more than one split.
+    """
+
+    split.validate()
+
+
+def split_group_ids(
+    groups: list[str],
+    train_ratio: float = 0.70,
+    validation_ratio: float = 0.15,
+    test_ratio: float = 0.15,
+    seed: int = 42,
+) -> SplitGroups:
+    """
+    Randomly split group IDs.
+
+    IMPORTANT:
+    This function splits GROUPS, not individual samples.
+    """
+
+    import random
+
+    if not groups:
+        raise ValueError(
+            "Cannot split an empty group list."
+        )
+
+    if train_ratio <= 0:
+        raise ValueError(
+            "train_ratio must be > 0."
+        )
+
+    if validation_ratio <= 0:
+        raise ValueError(
+            "validation_ratio must be > 0."
+        )
+
+    if test_ratio <= 0:
+        raise ValueError(
+            "test_ratio must be > 0."
+        )
+
+    total_ratio = (
+        train_ratio
+        + validation_ratio
+        + test_ratio
+    )
+
+    if abs(total_ratio - 1.0) > 1e-6:
+        raise ValueError(
+            "train_ratio + validation_ratio + "
+            "test_ratio must equal 1."
+        )
+
+    groups = list(
+        dict.fromkeys(groups)
+    )
+
+    rng = random.Random(seed)
+
+    rng.shuffle(groups)
+
+    total = len(groups)
+
+    train_count = max(
+        1,
+        round(
+            total * train_ratio
+        ),
+    )
+
+    validation_count = max(
+        1,
+        round(
+            total * validation_ratio
+        ),
+    )
+
+    # Guarantee at least one test group.
+    test_count = (
+        total
+        - train_count
+        - validation_count
+    )
+
+    if test_count < 1:
+        test_count = 1
+
+        if train_count > validation_count:
+            train_count -= 1
         else:
-            raise ValueError(
-                "Unable to create a non-empty "
-                "training split."
-            )
+            validation_count -= 1
 
-    test_groups = group_ids[
-        :num_test
+    if train_count < 1:
+        raise ValueError(
+            "Not enough groups for a train split."
+        )
+
+    if validation_count < 1:
+        raise ValueError(
+            "Not enough groups for a validation split."
+        )
+
+    if test_count < 1:
+        raise ValueError(
+            "Not enough groups for a test split."
+        )
+
+    train = groups[
+        :train_count
     ]
 
-    validation_groups = group_ids[
-        num_test:
-        num_test + num_validation
+    validation = groups[
+        train_count:
+        train_count + validation_count
     ]
 
-    train_groups = group_ids[
-        num_test + num_validation:
+    test = groups[
+        train_count + validation_count:
     ]
 
-    def flatten(
-        selected_groups: list[str],
-    ) -> list[GraphSample]:
-
-        result: list[
-            GraphSample
-        ] = []
-
-        for group_id in selected_groups:
-
-            result.extend(
-                groups[group_id]
-            )
-
-        return result
-
-    train_samples = flatten(
-        train_groups
+    split = SplitGroups(
+        train=train,
+        validation=validation,
+        test=test,
     )
 
-    validation_samples = flatten(
-        validation_groups
-    )
+    split.validate()
 
-    test_samples = flatten(
-        test_groups
-    )
-
-    return DatasetSplit(
-        train=train_samples,
-        validation=validation_samples,
-        test=test_samples,
-    )
+    return split
