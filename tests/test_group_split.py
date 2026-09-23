@@ -1,159 +1,176 @@
-import torch
+from __future__ import annotations
 
-from chicken_behavior_lab.dataset import (
-    GraphSample,
-    group_train_validation_test_split,
+from dataclasses import dataclass
+
+from chicken_behavior_lab.dataset.group_split import (
+    split_group_ids,
+)
+
+from chicken_behavior_lab.dataset.group_splitter import (
+    split_dataset_by_group,
 )
 
 
-def make_sample(
-    sample_id: str,
-    video_id: str,
-    track_id: str,
-    label: str,
-) -> GraphSample:
-
-    return GraphSample(
-        sample_id=sample_id,
-        node_features=torch.randn(
-            6,
-            7,
-        ),
-        edge_index=torch.tensor(
-            [
-                [0, 1],
-                [1, 0],
-            ],
-            dtype=torch.long,
-        ),
-        edge_features=torch.randn(
-            2,
-            8,
-        ),
-        label=label,
-        metadata={
-            "video_id": video_id,
-            "track_id": track_id,
-        },
-    )
+@dataclass
+class DummySample:
+    metadata: dict
 
 
-def test_video_group_split():
+class DummyDataset:
+    def __init__(
+        self,
+        samples,
+    ):
+        self.samples = samples
 
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(
+        self,
+        index,
+    ):
+        return self.samples[index]
+
+
+def make_dataset():
     samples = []
 
-    for video_index in range(10):
-
-        video_id = (
-            f"video_{video_index:02d}"
-        )
-
-        for track_index in range(2):
-
-            track_id = (
-                f"track_{track_index:02d}"
+    for video_id in [
+        "video_001",
+        "video_002",
+        "video_003",
+        "video_004",
+        "video_005",
+        "video_006",
+        "video_007",
+        "video_008",
+        "video_009",
+        "video_010",
+    ]:
+        for frame in range(3):
+            samples.append(
+                DummySample(
+                    metadata={
+                        "video_id": video_id,
+                        "track_id": 1,
+                        "frame_id": frame,
+                    }
+                )
             )
 
-            for sample_index in range(5):
-
-                samples.append(
-                    make_sample(
-                        sample_id=(
-                            f"{video_id}_"
-                            f"{track_id}_"
-                            f"{sample_index}"
-                        ),
-                        video_id=video_id,
-                        track_id=track_id,
-                        label="walking",
-                    )
-                )
-
-    split = (
-        group_train_validation_test_split(
-            samples,
-            validation_fraction=0.2,
-            test_fraction=0.2,
-            group_by="video",
-            random_seed=42,
-        )
+    return DummyDataset(
+        samples
     )
 
-    train_videos = {
-        sample.video_id
-        for sample in split.train
-    }
 
-    validation_videos = {
-        sample.video_id
-        for sample in split.validation
-    }
-
-    test_videos = {
-        sample.video_id
-        for sample in split.test
-    }
-
-    assert (
-        train_videos
-        .isdisjoint(
-            validation_videos
-        )
+def test_group_ids_do_not_overlap():
+    split = split_group_ids(
+        [
+            "video_001",
+            "video_002",
+            "video_003",
+            "video_004",
+            "video_005",
+            "video_006",
+            "video_007",
+            "video_008",
+            "video_009",
+            "video_010",
+        ],
+        seed=42,
     )
 
-    assert (
-        train_videos
-        .isdisjoint(
-            test_videos
-        )
+    train = set(
+        split.train
     )
 
-    assert (
+    validation = set(
+        split.validation
+    )
+
+    test = set(
+        split.test
+    )
+
+    assert not train.intersection(
+        validation
+    )
+
+    assert not train.intersection(
+        test
+    )
+
+    assert not validation.intersection(
+        test
+    )
+
+
+def test_dataset_split_has_no_video_leakage():
+    dataset = make_dataset()
+
+    splits = split_dataset_by_group(
+        dataset,
+        group_by="video",
+        seed=42,
+    )
+
+    def get_videos(subset):
+        videos = set()
+
+        for index in range(
+            len(subset)
+        ):
+            sample = subset[index]
+
+            videos.add(
+                sample.metadata[
+                    "video_id"
+                ]
+            )
+
+        return videos
+
+    train_videos = get_videos(
+        splits.train
+    )
+
+    validation_videos = get_videos(
+        splits.validation
+    )
+
+    test_videos = get_videos(
+        splits.test
+    )
+
+    assert not train_videos.intersection(
         validation_videos
-        .isdisjoint(
-            test_videos
-        )
+    )
+
+    assert not train_videos.intersection(
+        test_videos
+    )
+
+    assert not validation_videos.intersection(
+        test_videos
     )
 
 
 def test_all_samples_are_preserved():
+    dataset = make_dataset()
 
-    samples = []
-
-    for video_index in range(6):
-
-        video_id = (
-            f"video_{video_index}"
-        )
-
-        for sample_index in range(4):
-
-            samples.append(
-                make_sample(
-                    sample_id=(
-                        f"{video_id}_"
-                        f"sample_{sample_index}"
-                    ),
-                    video_id=video_id,
-                    track_id="track_01",
-                    label="walking",
-                )
-            )
-
-    split = (
-        group_train_validation_test_split(
-            samples,
-            validation_fraction=0.2,
-            test_fraction=0.2,
-            group_by="video",
-            random_seed=42,
-        )
+    splits = split_dataset_by_group(
+        dataset,
+        group_by="video",
+        seed=42,
     )
 
-    total = (
-        len(split.train)
-        + len(split.validation)
-        + len(split.test)
+    total_split_samples = (
+        len(splits.train)
+        + len(splits.validation)
+        + len(splits.test)
     )
 
-    assert total == len(samples)
+    assert total_split_samples == len(
+        dataset
+    )
