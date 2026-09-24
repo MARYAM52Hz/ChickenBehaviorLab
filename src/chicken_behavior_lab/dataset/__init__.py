@@ -20,6 +20,7 @@ from chicken_behavior_lab.dataset.temporal_dataset import (
 
 from chicken_behavior_lab.dataset.temporal_builder import (
     TemporalSequenceBuilder,
+    TemporalWindow,
 )
 
 from chicken_behavior_lab.dataset.temporal_pyg_dataset import (
@@ -54,19 +55,42 @@ from chicken_behavior_lab.dataset.group_splitter import (
     split_dataset_by_group,
 )
 
+from chicken_behavior_lab.dataset.temporal_split_builder import (
+    TemporalDatasetSplits,
+    build_temporal_splits,
+)
+
 
 __all__ = [
+    # ---------------------------------------------------------
+    # Basic graph dataset
+    # ---------------------------------------------------------
+
     "GraphSample",
     "GraphDataset",
     "PyGGraphDataset",
 
+    # ---------------------------------------------------------
+    # Temporal graph representation
+    # ---------------------------------------------------------
+
     "TemporalGraphSample",
     "TemporalGraphDataset",
     "TemporalSequenceBuilder",
+    "TemporalWindow",
     "TemporalPyGDataset",
+
+    # ---------------------------------------------------------
+    # Temporal batching
+    # ---------------------------------------------------------
+
     "TemporalBatch",
     "TemporalCollator",
     "make_temporal_dataloader",
+
+    # ---------------------------------------------------------
+    # Group-aware splitting
+    # ---------------------------------------------------------
 
     "SplitGroups",
     "normalize_group_id",
@@ -77,6 +101,14 @@ __all__ = [
     "split_group_ids",
 
     "GroupSubset",
+
     "DatasetSplits",
     "split_dataset_by_group",
+
+    # ---------------------------------------------------------
+    # Temporal split construction
+    # ---------------------------------------------------------
+
+    "TemporalDatasetSplits",
+    "build_temporal_splits",
 ]
