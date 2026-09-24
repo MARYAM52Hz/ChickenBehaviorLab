@@ -1,238 +1,396 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Iterable
+from dataclasses import dataclass
+from typing import Iterable, Sequence
 
-from chicken_behavior_lab.dataset.sample import GraphSample
-from chicken_behavior_lab.dataset.temporal_sample import (
-    TemporalGraphSample,
-)
+
+@dataclass(slots=True)
+class TemporalWindow:
+    """
+    A temporal window belonging to exactly one video/track group.
+    """
+
+    samples: list
+    sample_id: str
+    video_id: str
+    track_id: int
+    start_frame: int
+    end_frame: int
+    behavior_id: str
 
 
 class TemporalSequenceBuilder:
     """
-    Build temporal graph sequences from graph samples.
+    Build temporal windows from graph samples.
 
-    Graph samples are grouped by video and track, then ordered
-    temporally before being assembled into fixed-length
-    sequences.
+    IMPORTANT
+    ---------
+    This builder operates only on the samples supplied to it.
+
+    Therefore train/validation/test splitting must happen BEFORE
+    this builder is called.
     """
 
     def __init__(
         self,
-        sequence_length: int,
-        stride: int | None = None,
+        sequence_length: int = 16,
+        sequence_stride: int = 4,
+        require_same_behavior: bool = False,
     ) -> None:
+
         if sequence_length < 1:
             raise ValueError(
                 "sequence_length must be >= 1."
             )
 
-        if stride is None:
-            stride = sequence_length
-
-        if stride < 1:
+        if sequence_stride < 1:
             raise ValueError(
-                "stride must be >= 1."
+                "sequence_stride must be >= 1."
             )
 
         self.sequence_length = sequence_length
-        self.stride = stride
+        self.sequence_stride = sequence_stride
+        self.require_same_behavior = (
+            require_same_behavior
+        )
 
     def build(
         self,
-        samples: Iterable[GraphSample],
-    ) -> list[TemporalGraphSample]:
-        samples = list(samples)
+        samples: Sequence,
+    ) -> list[TemporalWindow]:
+        """
+        Build temporal windows.
 
-        if not samples:
-            return []
+        Samples are first grouped by video + track.
+
+        Within each group, samples are sorted by frame.
+
+        Windows are then created using sequence_length and
+        sequence_stride.
+        """
+
+        grouped = self._group_samples(
+            samples
+        )
+
+        windows: list[TemporalWindow] = []
+
+        for _, group_samples in grouped.items():
+
+            ordered = self._sort_by_frame(
+                group_samples
+            )
+
+            group_windows = (
+                self._build_group_windows(
+                    ordered
+                )
+            )
+
+            windows.extend(
+                group_windows
+            )
+
+        return windows
+
+    def _group_samples(
+        self,
+        samples: Iterable,
+    ) -> dict[tuple[str, int], list]:
 
         grouped: dict[
             tuple[str, int],
-            list[GraphSample],
+            list,
         ] = defaultdict(list)
 
         for sample in samples:
-            video_id = sample.get_metadata(
+
+            video_id = self._get_video_id(
+                sample
+            )
+
+            track_id = self._get_track_id(
+                sample
+            )
+
+            key = (
+                video_id,
+                track_id,
+            )
+
+            grouped[key].append(
+                sample
+            )
+
+        return dict(grouped)
+
+    def _sort_by_frame(
+        self,
+        samples: Sequence,
+    ) -> list:
+
+        return sorted(
+            samples,
+            key=self._get_frame_id,
+        )
+
+    def _build_group_windows(
+        self,
+        samples: Sequence,
+    ) -> list[TemporalWindow]:
+
+        if len(samples) < self.sequence_length:
+            return []
+
+        windows: list[
+            TemporalWindow
+        ] = []
+
+        start = 0
+
+        while (
+            start + self.sequence_length
+            <= len(samples)
+        ):
+
+            window_samples = list(
+                samples[
+                    start:
+                    start
+                    + self.sequence_length
+                ]
+            )
+
+            if self.require_same_behavior:
+                if not self._same_behavior(
+                    window_samples
+                ):
+                    start += self.sequence_stride
+                    continue
+
+            first = window_samples[0]
+            last = window_samples[-1]
+
+            video_id = self._get_video_id(
+                first
+            )
+
+            track_id = self._get_track_id(
+                first
+            )
+
+            start_frame = (
+                self._get_frame_id(
+                    first
+                )
+            )
+
+            end_frame = (
+                self._get_frame_id(
+                    last
+                )
+            )
+
+            behavior_id = (
+                self._get_window_behavior(
+                    window_samples
+                )
+            )
+
+            sample_id = (
+                f"{video_id}"
+                f"__track_{track_id}"
+                f"__frames_{start_frame}"
+                f"_{end_frame}"
+            )
+
+            windows.append(
+                TemporalWindow(
+                    samples=window_samples,
+                    sample_id=sample_id,
+                    video_id=video_id,
+                    track_id=track_id,
+                    start_frame=start_frame,
+                    end_frame=end_frame,
+                    behavior_id=behavior_id,
+                )
+            )
+
+            start += self.sequence_stride
+
+        return windows
+
+    def _same_behavior(
+        self,
+        samples: Sequence,
+    ) -> bool:
+
+        behaviors = {
+            self._get_behavior_id(
+                sample
+            )
+            for sample in samples
+        }
+
+        return len(behaviors) == 1
+
+    def _get_window_behavior(
+        self,
+        samples: Sequence,
+    ) -> str:
+        """
+        Determine the label of a temporal window.
+
+        For now we use the final frame's behavior.
+
+        This keeps the implementation compatible with
+        sequence-to-one classification.
+
+        Later we can replace this with:
+            - majority voting
+            - center-frame label
+            - transition label
+            - event label
+        """
+
+        return self._get_behavior_id(
+            samples[-1]
+        )
+
+    @staticmethod
+    def _get_video_id(
+        sample,
+    ) -> str:
+
+        metadata = getattr(
+            sample,
+            "metadata",
+            None,
+        )
+
+        if isinstance(metadata, dict):
+            value = metadata.get(
                 "video_id"
             )
 
-            track_id = sample.get_metadata(
-                "track_id"
-            )
+            if value is not None:
+                return str(value)
 
-            if video_id is None:
-                raise ValueError(
-                    f"Sample '{sample.sample_id}' "
-                    "is missing metadata.video_id."
-                )
-
-            if track_id is None:
-                raise ValueError(
-                    f"Sample '{sample.sample_id}' "
-                    "is missing metadata.track_id."
-                )
-
-            grouped[
-                (str(video_id), int(track_id))
-            ].append(sample)
-
-        sequences = []
-
-        for (
-            video_id,
-            track_id,
-        ), track_samples in grouped.items():
-
-            track_samples.sort(
-                key=self._start_frame
-            )
-
-            sequences.extend(
-                self._build_track_sequences(
-                    video_id=video_id,
-                    track_id=track_id,
-                    samples=track_samples,
-                )
-            )
-
-        return sequences
-
-    def _build_track_sequences(
-        self,
-        video_id: str,
-        track_id: int,
-        samples: list[GraphSample],
-    ) -> list[TemporalGraphSample]:
-        sequences = []
-
-        if len(samples) < self.sequence_length:
-            return sequences
-
-        for start in range(
-            0,
-            len(samples)
-            - self.sequence_length
-            + 1,
-            self.stride,
-        ):
-            window = samples[
-                start:
-                start + self.sequence_length
-            ]
-
-            if not self._is_contiguous(
-                window
-            ):
-                continue
-
-            labels = {
-                sample.label
-                for sample in window
-            }
-
-            behavior_ids = {
-                sample.behavior_id
-                for sample in window
-            }
-
-            # A sequence should represent one behavior.
-            if len(labels) != 1:
-                continue
-
-            if len(behavior_ids) != 1:
-                continue
-
-            first = window[0]
-            last = window[-1]
-
-            first_frame = first.get_metadata(
-                "start_frame"
-            )
-
-            last_frame = last.get_metadata(
-                "end_frame"
-            )
-
-            if first_frame is None:
-                first_frame = 0
-
-            if last_frame is None:
-                last_frame = first_frame
-
-            sample_id = (
-                f"{video_id}_"
-                f"track_{track_id}_"
-                f"{first_frame}_"
-                f"{last_frame}"
-            )
-
-            temporal_sample = TemporalGraphSample(
-                graphs=window,
-                label=first.label,
-                behavior_id=(
-                    first.behavior_id
-                ),
-                sample_id=sample_id,
-                metadata={
-                    "video_id": video_id,
-                    "track_id": track_id,
-                    "start_frame": first_frame,
-                    "end_frame": last_frame,
-                    "sequence_length": (
-                        self.sequence_length
-                    ),
-                },
-            )
-
-            temporal_sample.validate()
-
-            sequences.append(
-                temporal_sample
-            )
-
-        return sequences
-
-    @staticmethod
-    def _start_frame(
-        sample: GraphSample,
-    ) -> int:
-        value = sample.get_metadata(
-            "start_frame"
+        value = getattr(
+            sample,
+            "video_id",
+            None,
         )
 
         if value is None:
-            return 0
+            raise ValueError(
+                "Sample does not contain video_id."
+            )
+
+        return str(value)
+
+    @staticmethod
+    def _get_track_id(
+        sample,
+    ) -> int:
+
+        metadata = getattr(
+            sample,
+            "metadata",
+            None,
+        )
+
+        if isinstance(metadata, dict):
+            value = metadata.get(
+                "track_id"
+            )
+
+            if value is not None:
+                return int(value)
+
+        value = getattr(
+            sample,
+            "track_id",
+            None,
+        )
+
+        if value is None:
+            raise ValueError(
+                "Sample does not contain track_id."
+            )
 
         return int(value)
 
     @staticmethod
-    def _is_contiguous(
-        samples: list[GraphSample],
-    ) -> bool:
-        if len(samples) < 2:
-            return True
+    def _get_frame_id(
+        sample,
+    ) -> int:
 
-        for previous, current in zip(
-            samples,
-            samples[1:],
-        ):
-            previous_end = previous.get_metadata(
-                "end_frame"
-            )
+        metadata = getattr(
+            sample,
+            "metadata",
+            None,
+        )
 
-            current_start = current.get_metadata(
-                "start_frame"
-            )
-
-            if (
-                previous_end is None
-                or current_start is None
+        if isinstance(metadata, dict):
+            for key in (
+                "frame_id",
+                "frame_index",
             ):
-                return False
+                value = metadata.get(
+                    key
+                )
 
-            if current_start <= previous_end:
-                return False
+                if value is not None:
+                    return int(value)
 
-        return True
+        for key in (
+            "frame_id",
+            "frame_index",
+        ):
+            value = getattr(
+                sample,
+                key,
+                None,
+            )
+
+            if value is not None:
+                return int(value)
+
+        raise ValueError(
+            "Sample does not contain frame_id "
+            "or frame_index."
+        )
+
+    @staticmethod
+    def _get_behavior_id(
+        sample,
+    ) -> str:
+
+        metadata = getattr(
+            sample,
+            "metadata",
+            None,
+        )
+
+        if isinstance(metadata, dict):
+            value = metadata.get(
+                "behavior_id"
+            )
+
+            if value is not None:
+                return str(value)
+
+        value = getattr(
+            sample,
+            "behavior_id",
+            None,
+        )
+
+        if value is None:
+            raise ValueError(
+                "Sample does not contain behavior_id."
+            )
+
+        return str(value)
