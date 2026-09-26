@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import torch
-from torch import nn
+import torch.nn as nn
 
 from chicken_behavior_lab.dataset.temporal_batch import (
     TemporalBatch,
 )
 
-from chicken_behavior_lab.models.spatial_encoder import (
-    SpatialGraphEncoder,
+from chicken_behavior_lab.models.edge_aware_gnn import (
+    EdgeAwareGNN,
+)
+
+from chicken_behavior_lab.models.graph_pooling import (
+    GraphMeanPooling,
 )
 
 from chicken_behavior_lab.models.temporal_encoder import (
@@ -18,80 +22,65 @@ from chicken_behavior_lab.models.temporal_encoder import (
 
 class TemporalBehaviorGNN(nn.Module):
     """
-    Spatio-temporal graph model for chicken behavior
-    recognition.
+    Temporal graph neural network.
 
-    Architecture
-    ------------
-    Temporal skeleton graphs
-        ↓
-    Spatial GNN at each time step
-        ↓
-    Global node pooling
-        ↓
-    GRU temporal encoder
-        ↓
-    Classification head
+    Pipeline:
+
+        Graph + Edge Features
+                ↓
+          Edge-aware GNN
+                ↓
+          Graph Pooling
+                ↓
+          Temporal Sequence
+                ↓
+               GRU
+                ↓
+           Classifier
     """
 
     def __init__(
         self,
         node_feature_dim: int,
-        edge_feature_dim: int | None,
+        edge_feature_dim: int,
         spatial_hidden_dim: int,
         temporal_hidden_dim: int,
         num_classes: int,
         num_gnn_layers: int = 2,
         num_gru_layers: int = 1,
-        dropout: float = 0.0,
+        dropout: float = 0.2,
         bidirectional_gru: bool = False,
     ) -> None:
+
         super().__init__()
 
-        if num_classes < 2:
-            raise ValueError(
-                "num_classes must be >= 2."
-            )
-
-        self.spatial_encoder = (
-            SpatialGraphEncoder(
-                node_feature_dim=(
-                    node_feature_dim
-                ),
-                edge_feature_dim=(
-                    edge_feature_dim
-                ),
-                hidden_dim=(
-                    spatial_hidden_dim
-                ),
-                num_layers=num_gnn_layers,
-                dropout=dropout,
-            )
+        self.spatial_encoder = EdgeAwareGNN(
+            node_feature_dim=node_feature_dim,
+            edge_feature_dim=edge_feature_dim,
+            hidden_dim=spatial_hidden_dim,
+            num_layers=num_gnn_layers,
+            dropout=dropout,
         )
 
-        self.temporal_encoder = (
-            GRUTemporalEncoder(
-                input_dim=spatial_hidden_dim,
-                hidden_dim=temporal_hidden_dim,
-                num_layers=num_gru_layers,
-                dropout=dropout,
-                bidirectional=bidirectional_gru,
-            )
-        )
+        self.pooling = GraphMeanPooling()
 
-        temporal_output_dim = (
-            self.temporal_encoder.output_dim
+        self.temporal_encoder = GRUTemporalEncoder(
+            input_dim=spatial_hidden_dim,
+            hidden_dim=temporal_hidden_dim,
+            num_layers=num_gru_layers,
+            dropout=dropout,
+            bidirectional=bidirectional_gru,
         )
 
         self.classifier = nn.Sequential(
             nn.Linear(
-                temporal_output_dim,
-                temporal_output_dim,
+                self.temporal_encoder.output_dim,
+                temporal_hidden_dim,
             ),
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(
-                temporal_output_dim,
+                temporal_hidden_dim,
                 num_classes,
             ),
         )
@@ -100,84 +89,110 @@ class TemporalBehaviorGNN(nn.Module):
         self,
         batch: TemporalBatch,
     ) -> torch.Tensor:
-        batch.validate()
 
-        x = batch.x
-        edge_index = batch.edge_index
-        edge_attr = batch.edge_attr
-
-        batch_size = x.shape[0]
-        sequence_length = x.shape[1]
-
-        temporal_embeddings = []
-
-        for time_index in range(
-            sequence_length
+        if not isinstance(
+            batch,
+            TemporalBatch,
         ):
-            x_t = x[
-                :,
-                time_index,
-                :,
-                :,
-            ]
+            raise TypeError(
+                "TemporalBehaviorGNN expects "
+                "a TemporalBatch."
+            )
 
-            if edge_attr is not None:
-                edge_attr_t = edge_attr[
-                    :,
-                    time_index,
-                    :,
-                    :,
-                ]
-            else:
-                edge_attr_t = None
+        frame_embeddings = []
 
-            spatial_embeddings = []
+        for t in range(
+            batch.sequence_length
+        ):
 
-            for batch_index in range(
-                batch_size
-            ):
-                node_embeddings = (
-                    self.spatial_encoder(
-                        x=x_t[batch_index],
-                        edge_index=edge_index,
-                        edge_attr=(
-                            edge_attr_t[batch_index]
-                            if edge_attr_t is not None
-                            else None
-                        ),
-                    )
+            pyg_batch = (
+                batch.frame_batches[t]
+            )
+
+            x = pyg_batch.x
+
+            edge_index = (
+                pyg_batch.edge_index
+            )
+
+            edge_attr = (
+                pyg_batch.edge_attr
+            )
+
+            if edge_attr is None:
+                raise ValueError(
+                    "TemporalBehaviorGNN requires "
+                    "edge_attr."
                 )
 
-                pooled = (
-                    node_embeddings.mean(
-                        dim=0
-                    )
-                )
-
-                spatial_embeddings.append(
-                    pooled
-                )
-
-            temporal_embeddings.append(
-                torch.stack(
-                    spatial_embeddings,
-                    dim=0,
+            node_embeddings = (
+                self.spatial_encoder(
+                    x=x,
+                    edge_index=edge_index,
+                    edge_attr=edge_attr,
                 )
             )
 
-        sequence_embedding = torch.stack(
-            temporal_embeddings,
+            graph_embeddings = (
+                self._pool_batched_graphs(
+                    node_embeddings,
+                    pyg_batch.batch,
+                )
+            )
+
+            frame_embeddings.append(
+                graph_embeddings
+            )
+
+        temporal_input = torch.stack(
+            frame_embeddings,
             dim=1,
         )
 
-        temporal_output = (
+        temporal_embedding = (
             self.temporal_encoder(
-                sequence_embedding
+                temporal_input
             )
         )
 
         logits = self.classifier(
-            temporal_output
+            temporal_embedding
         )
 
         return logits
+
+    @staticmethod
+    def _pool_batched_graphs(
+        node_embeddings: torch.Tensor,
+        batch_index: torch.Tensor,
+    ) -> torch.Tensor:
+
+        num_graphs = int(
+            batch_index.max().item()
+        ) + 1
+
+        pooled = []
+
+        for graph_index in range(
+            num_graphs
+        ):
+
+            mask = (
+                batch_index
+                == graph_index
+            )
+
+            graph_nodes = (
+                node_embeddings[mask]
+            )
+
+            pooled.append(
+                graph_nodes.mean(
+                    dim=0
+                )
+            )
+
+        return torch.stack(
+            pooled,
+            dim=0,
+        )
