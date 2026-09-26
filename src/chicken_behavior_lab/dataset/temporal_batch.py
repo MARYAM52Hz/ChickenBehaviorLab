@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -11,21 +12,18 @@ class TemporalBatch:
     """
     Batch of temporal graph sequences.
 
-    Shapes
-    ------
     x:
         [B, T, N, F]
 
-    edge_index:
-        List-like structure containing graph connectivity
-        for each temporal frame.
+    frame_batches:
+        PyG Batch object for every temporal frame.
 
     edge_attr:
-        List-like structure containing edge features
-        for each temporal frame.
+        One tensor per temporal frame with shape:
 
-    y:
-        [B]
+            [B, E, D]
+
+        or None when edge features are unavailable.
     """
 
     x: torch.Tensor
@@ -48,23 +46,19 @@ class TemporalBatch:
 
     behavior_id: list[str]
 
-    frame_batches: list[list[Batch]]
+    frame_batches: list[Batch]
 
     @property
     def batch_size(self) -> int:
-        return len(
-            self.sample_id
-        )
+        return len(self.sample_id)
 
     @property
     def sequence_length(self) -> int:
-        if self.x.ndim < 2:
-            raise ValueError(
-                "TemporalBatch.x must have at least "
-                "two dimensions."
-            )
-
         return self.x.shape[1]
+
+    @property
+    def node_feature_dim(self) -> int:
+        return self.x.shape[-1]
 
     def to(
         self,
@@ -72,20 +66,11 @@ class TemporalBatch:
     ) -> "TemporalBatch":
 
         self.x = self.x.to(device)
-
         self.y = self.y.to(device)
 
-        self.track_id = (
-            self.track_id.to(device)
-        )
-
-        self.start_frame = (
-            self.start_frame.to(device)
-        )
-
-        self.end_frame = (
-            self.end_frame.to(device)
-        )
+        self.track_id = self.track_id.to(device)
+        self.start_frame = self.start_frame.to(device)
+        self.end_frame = self.end_frame.to(device)
 
         self.edge_index = [
             edge.to(device)
@@ -99,8 +84,9 @@ class TemporalBatch:
             for edge in self.edge_attr
         ]
 
-        for frame_batches in self.frame_batches:
-            for batch in frame_batches:
-                batch.to(device)
+        self.frame_batches = [
+            batch.to(device)
+            for batch in self.frame_batches
+        ]
 
         return self
