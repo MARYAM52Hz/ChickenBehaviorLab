@@ -5,15 +5,12 @@ from dataclasses import dataclass
 
 @dataclass(slots=True)
 class ModelConfig:
-    """
-    Configuration shared by baseline and temporal models.
-    """
 
     model_type: str = "baseline"
 
     node_feature_dim: int = 8
 
-    edge_feature_dim: int | None = None
+    edge_feature_dim: int = 4
 
     spatial_hidden_dim: int = 64
 
@@ -34,15 +31,14 @@ class ModelConfig:
     sequence_stride: int = 4
 
     def validate(self) -> None:
-        valid_model_types = {
+
+        if self.model_type not in {
             "baseline",
             "temporal",
-        }
-
-        if self.model_type not in valid_model_types:
+        }:
             raise ValueError(
-                "model_type must be one of: "
-                f"{sorted(valid_model_types)}"
+                "model_type must be either "
+                "'baseline' or 'temporal'."
             )
 
         if self.node_feature_dim < 1:
@@ -50,13 +46,9 @@ class ModelConfig:
                 "node_feature_dim must be >= 1."
             )
 
-        if (
-            self.edge_feature_dim is not None
-            and self.edge_feature_dim < 1
-        ):
+        if self.edge_feature_dim < 1:
             raise ValueError(
-                "edge_feature_dim must be >= 1 "
-                "when provided."
+                "edge_feature_dim must be >= 1."
             )
 
         if self.spatial_hidden_dim < 1:
