@@ -1,14 +1,13 @@
-import numpy as np
+from __future__ import annotations
+
 import torch
 
-from types import SimpleNamespace
-
-from chicken_behavior_lab.dataset.sample import (
-    GraphSample,
+from chicken_behavior_lab.config.model_config import (
+    ModelConfig,
 )
 
-from chicken_behavior_lab.dataset.temporal_sample import (
-    TemporalGraphSample,
+from chicken_behavior_lab.dataset.temporal_builder import (
+    TemporalSequenceBuilder,
 )
 
 from chicken_behavior_lab.dataset.temporal_pyg_dataset import (
@@ -16,179 +15,152 @@ from chicken_behavior_lab.dataset.temporal_pyg_dataset import (
 )
 
 from chicken_behavior_lab.dataset.temporal_collate import (
-    TemporalCollator,
+    make_temporal_dataloader,
 )
 
-from chicken_behavior_lab.models.temporal_behavior_gnn import (
-    TemporalBehaviorGNN,
+from chicken_behavior_lab.models.model_factory import (
+    build_model,
 )
 
 
-def make_graph(
-    offset: float,
-):
-    return SimpleNamespace(
-        node_features=np.array(
-            [
-                [1.0 + offset, 2.0],
-                [3.0 + offset, 4.0],
-                [5.0 + offset, 6.0],
-            ],
-            dtype=np.float32,
-        ),
-        edge_index=np.array(
-            [
-                [0, 1, 1, 2],
-                [1, 0, 2, 1],
-            ],
-            dtype=np.int64,
-        ),
-        edge_features=np.array(
-            [
-                [0.1, 0.2],
-                [0.1, 0.2],
-                [0.2, 0.3],
-                [0.2, 0.3],
-            ],
-            dtype=np.float32,
-        ),
-        validate=lambda: None,
-    )
+class DummySample:
 
+    def __init__(
+        self,
+        frame_id: int,
+    ) -> None:
 
-def make_sequence(
-    sample_id: str,
-    label: int,
-    behavior_id: str,
-    offset: float,
-):
-    graphs = []
-
-    for index in range(3):
-        graphs.append(
-            GraphSample(
-                graph=make_graph(
-                    offset + index
-                ),
-                label=label,
-                behavior_id=behavior_id,
-                sample_id=(
-                    f"{sample_id}_graph_{index}"
-                ),
-                metadata={
-                    "video_id": "video_001",
-                    "track_id": 1,
-                    "start_frame": (
-                        100 + index * 10
-                    ),
-                    "end_frame": (
-                        109 + index * 10
-                    ),
-                },
-            )
+        self.x = torch.randn(
+            13,
+            8,
         )
 
-    return TemporalGraphSample(
-        graphs=graphs,
-        label=label,
-        behavior_id=behavior_id,
-        sample_id=sample_id,
-        metadata={
+        self.edge_index = torch.tensor(
+            [
+                [0, 1, 2, 3],
+                [1, 2, 3, 4],
+            ],
+            dtype=torch.long,
+        )
+
+        self.edge_attr = torch.randn(
+            4,
+            4,
+        )
+
+        self.metadata = {
             "video_id": "video_001",
             "track_id": 1,
-        },
+            "frame_id": frame_id,
+            "behavior_id": 0,
+        }
+
+
+def test_temporal_behavior_gnn_forward():
+
+    samples = [
+        DummySample(i)
+        for i in range(16)
+    ]
+
+    builder = TemporalSequenceBuilder(
+        sequence_length=8,
+        sequence_stride=4,
     )
 
-
-def test_temporal_behavior_gnn_output_shape():
-    temporal_samples = [
-        make_sequence(
-            "sequence_001",
-            0,
-            "feeding",
-            0.0,
-        ),
-        make_sequence(
-            "sequence_002",
-            1,
-            "walking",
-            10.0,
-        ),
-    ]
+    windows = builder.build(
+        samples
+    )
 
     dataset = TemporalPyGDataset(
-        temporal_samples
+        windows
     )
 
-    data_list = [
-        dataset[0],
-        dataset[1],
-    ]
-
-    batch = TemporalCollator()(
-        data_list
+    loader = make_temporal_dataloader(
+        dataset,
+        batch_size=2,
     )
 
-    model = TemporalBehaviorGNN(
-        node_feature_dim=2,
-        edge_feature_dim=2,
-        spatial_hidden_dim=8,
-        temporal_hidden_dim=16,
-        num_classes=2,
-        num_gnn_layers=2,
-        num_gru_layers=1,
-        dropout=0.0,
+    batch = next(
+        iter(loader)
     )
 
-    logits = model(batch)
+    config = ModelConfig(
+        model_type="temporal",
+        node_feature_dim=8,
+        edge_feature_dim=4,
+        spatial_hidden_dim=32,
+        temporal_hidden_dim=64,
+        num_classes=3,
+        sequence_length=8,
+    )
+
+    model = build_model(
+        config
+    )
+
+    logits = model(
+        batch
+    )
 
     assert logits.shape == (
         2,
-        2,
+        3,
     )
+
+    assert torch.isfinite(
+        logits
+    ).all()
 
 
 def test_temporal_behavior_gnn_backward():
-    temporal_samples = [
-        make_sequence(
-            "sequence_001",
-            0,
-            "feeding",
-            0.0,
-        ),
-        make_sequence(
-            "sequence_002",
-            1,
-            "walking",
-            10.0,
-        ),
+
+    samples = [
+        DummySample(i)
+        for i in range(16)
     ]
 
+    builder = TemporalSequenceBuilder(
+        sequence_length=8,
+        sequence_stride=4,
+    )
+
+    windows = builder.build(
+        samples
+    )
+
     dataset = TemporalPyGDataset(
-        temporal_samples
+        windows
     )
 
-    batch = TemporalCollator()(
-        [
-            dataset[0],
-            dataset[1],
-        ]
+    loader = make_temporal_dataloader(
+        dataset,
+        batch_size=2,
     )
 
-    model = TemporalBehaviorGNN(
-        node_feature_dim=2,
-        edge_feature_dim=2,
-        spatial_hidden_dim=8,
-        temporal_hidden_dim=16,
-        num_classes=2,
+    batch = next(
+        iter(loader)
     )
 
-    logits = model(batch)
-
-    loss = torch.nn.functional.cross_entropy(
-        logits,
-        batch.y,
+    config = ModelConfig(
+        model_type="temporal",
+        node_feature_dim=8,
+        edge_feature_dim=4,
+        spatial_hidden_dim=32,
+        temporal_hidden_dim=64,
+        num_classes=3,
+        sequence_length=8,
     )
+
+    model = build_model(
+        config
+    )
+
+    logits = model(
+        batch
+    )
+
+    loss = logits.mean()
 
     loss.backward()
 
