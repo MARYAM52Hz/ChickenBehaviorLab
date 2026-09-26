@@ -13,12 +13,15 @@ from chicken_behavior_lab.dataset.temporal_batch import (
 
 class TemporalCollator:
     """
-    Collate temporal graph samples into TemporalBatch.
+    Collate temporal graph sequences.
 
-    Important:
-        Graph topology can differ between frames, so edge_index
-        and edge_attr are kept frame-aware rather than flattened
-        into a single static graph.
+    Every temporal frame becomes one PyG Batch.
+
+    Therefore:
+
+        frame_batches[t]
+
+    contains the B graphs belonging to temporal step t.
     """
 
     def __call__(
@@ -38,35 +41,23 @@ class TemporalCollator:
 
         if len(sequence_lengths) != 1:
             raise ValueError(
-                "All temporal sequences in a batch must "
-                "have the same sequence length."
+                "All temporal sequences in a batch "
+                "must have the same sequence length."
             )
 
-        sequence_length = (
-            sequence_lengths.pop()
-        )
+        sequence_length = sequence_lengths.pop()
 
-        batch_size = len(items)
+        frame_batches: list[Batch] = []
 
-        frame_batches: list[
-            list[Batch]
-        ] = []
+        x_frames: list[torch.Tensor] = []
 
-        edge_indices: list[
-            torch.Tensor
-        ] = []
+        edge_indices: list[torch.Tensor] = []
 
         edge_attrs: list[
             torch.Tensor | None
         ] = []
 
-        x_frames: list[
-            torch.Tensor
-        ] = []
-
-        for t in range(
-            sequence_length
-        ):
+        for t in range(sequence_length):
 
             graphs_at_t = [
                 item["graphs"][t]
@@ -78,9 +69,7 @@ class TemporalCollator:
             )
 
             frame_batches.append(
-                [
-                    pyg_batch
-                ]
+                pyg_batch
             )
 
             x_frames.append(
@@ -90,13 +79,11 @@ class TemporalCollator:
             )
 
             edge_indices.append(
-                self._extract_common_edge_index(
-                    graphs_at_t
-                )
+                pyg_batch.edge_index
             )
 
             edge_attrs.append(
-                self._extract_common_edge_attr(
+                self._stack_edge_attributes(
                     graphs_at_t
                 )
             )
@@ -165,13 +152,8 @@ class TemporalCollator:
         graphs,
     ) -> torch.Tensor:
         """
-        Stack node features from graphs belonging to the
-        same temporal frame.
+        Return:
 
-        Expected:
-            each graph has [N, F]
-
-        Result:
             [B, N, F]
         """
 
@@ -195,40 +177,15 @@ class TemporalCollator:
         )
 
     @staticmethod
-    def _extract_common_edge_index(
-        graphs,
-    ) -> torch.Tensor:
-        """
-        Extract edge_index when graph topology is shared
-        across the batch.
-        """
-
-        first = graphs[0].edge_index
-
-        for graph in graphs[1:]:
-            if not torch.equal(
-                first,
-                graph.edge_index,
-            ):
-                raise ValueError(
-                    "TemporalCollator currently requires "
-                    "the same edge_index for all samples "
-                    "within a batch."
-                )
-
-        return first
-
-    @staticmethod
-    def _extract_common_edge_attr(
+    def _stack_edge_attributes(
         graphs,
     ) -> torch.Tensor | None:
         """
-        Extract edge attributes.
+        Return:
 
-        If no graph has edge attributes, return None.
+            [B, E, D]
 
-        If some graphs have edge attributes and others do not,
-        raise an error rather than silently dropping features.
+        or None.
         """
 
         attrs = [
@@ -236,18 +193,19 @@ class TemporalCollator:
             for graph in graphs
         ]
 
-        has_attr = [
-            attr is not None
+        if all(
+            attr is None
             for attr in attrs
-        ]
-
-        if not any(has_attr):
+        ):
             return None
 
-        if not all(has_attr):
+        if any(
+            attr is None
+            for attr in attrs
+        ):
             raise ValueError(
-                "Either all graphs in a temporal frame "
-                "must contain edge_attr or none of them."
+                "Some graphs contain edge_attr while "
+                "others do not."
             )
 
         first = attrs[0]
@@ -255,8 +213,8 @@ class TemporalCollator:
         for attr in attrs[1:]:
             if attr.shape != first.shape:
                 raise ValueError(
-                    "Edge attribute dimensions differ "
-                    "between samples in the batch."
+                    "Edge attribute shapes must be "
+                    "identical within a temporal frame."
                 )
 
         return torch.stack(
@@ -274,8 +232,6 @@ def make_temporal_dataloader(
     drop_last: bool = False,
 ) -> DataLoader:
 
-    collator = TemporalCollator()
-
     return DataLoader(
         dataset,
         batch_size=batch_size,
@@ -283,5 +239,5 @@ def make_temporal_dataloader(
         num_workers=num_workers,
         pin_memory=pin_memory,
         drop_last=drop_last,
-        collate_fn=collator,
+        collate_fn=TemporalCollator(),
     )
