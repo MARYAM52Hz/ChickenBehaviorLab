@@ -1,88 +1,93 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any
+from pathlib import Path
+from typing import Callable
 
 import torch
-from torch import nn
-from torch.optim import Optimizer
-from torch_geometric.loader import DataLoader
+import torch.nn as nn
+
+from chicken_behavior_lab.config.model_config import (
+    ModelConfig,
+)
+
+from chicken_behavior_lab.dataset.temporal_batch import (
+    TemporalBatch,
+)
 
 from chicken_behavior_lab.training.checkpoint import (
-    save_checkpoint,
+    CheckpointManager,
 )
 
 
-@dataclass(slots=True)
-class TrainingHistory:
-
-    train_loss: list[float] = field(
-        default_factory=list
-    )
-
-    validation_loss: list[float] = field(
-        default_factory=list
-    )
-
-    validation_accuracy: list[float] = field(
-        default_factory=list
-    )
-
-    validation_macro_f1: list[float] = field(
-        default_factory=list
-    )
-
-
 class Trainer:
+    """
+    Training loop for temporal behavior models.
+
+    Responsibilities
+    ----------------
+    - forward pass
+    - loss computation
+    - backward pass
+    - optimizer step
+    - validation
+    - checkpointing
+    """
 
     def __init__(
         self,
+        *,
         model: nn.Module,
-        optimizer: Optimizer,
-        loss_function: nn.Module,
-        device: torch.device,
-        checkpoint_path: str,
-        model_config: dict[str, Any],
-        training_config: dict[str, Any],
-        label_to_index: dict[str, int],
+        model_config: ModelConfig,
+        optimizer: torch.optim.Optimizer,
+        criterion: nn.Module,
+        device: torch.device | str = "cpu",
+        checkpoint_dir: str | Path = "checkpoints",
+        label_mapping: dict[str, int] | None = None,
+        scheduler=None,
+        metric_fn: Callable[
+            [torch.Tensor, torch.Tensor],
+            float,
+        ] | None = None,
     ) -> None:
 
         self.model = model
 
+        self.model_config = model_config
+
         self.optimizer = optimizer
 
-        self.loss_function = loss_function
+        self.criterion = criterion
 
-        self.device = device
-
-        self.checkpoint_path = (
-            checkpoint_path
+        self.device = torch.device(
+            device
         )
 
-        self.model_config = (
-            model_config
+        self.scheduler = scheduler
+
+        self.label_mapping = (
+            label_mapping or {}
         )
 
-        self.training_config = (
-            training_config
+        self.metric_fn = metric_fn
+
+        self.checkpoints = (
+            CheckpointManager(
+                checkpoint_dir
+            )
         )
 
-        self.label_to_index = (
-            label_to_index
+        self.model.to(
+            self.device
         )
 
-        self.history = (
-            TrainingHistory()
-        )
+        self.current_epoch = 0
 
-        self.best_validation_f1 = float(
-            "-inf"
-        )
+        self.best_metric = None
 
     def train_epoch(
         self,
-        data_loader: DataLoader,
-    ) -> float:
+        loader,
+    ) -> dict[str, float]:
 
         self.model.train()
 
@@ -90,7 +95,11 @@ class Trainer:
 
         total_samples = 0
 
-        for batch in data_loader:
+        predictions = []
+
+        targets = []
+
+        for batch in loader:
 
             batch = batch.to(
                 self.device
@@ -104,21 +113,22 @@ class Trainer:
                 batch
             )
 
-            targets = batch.y.view(
-                -1
-            )
-
-            loss = self.loss_function(
+            loss = self.criterion(
                 logits,
-                targets,
+                batch.y,
             )
 
             loss.backward()
 
+            torch.nn.utils.clip_grad_norm_(
+                self.model.parameters(),
+                max_norm=1.0,
+            )
+
             self.optimizer.step()
 
             batch_size = (
-                targets.size(0)
+                batch.y.shape[0]
             )
 
             total_loss += (
@@ -130,26 +140,61 @@ class Trainer:
                 batch_size
             )
 
-        if total_samples == 0:
-            raise RuntimeError(
-                "Training DataLoader "
-                "returned no samples."
+            predictions.append(
+                logits.detach()
             )
 
-        return (
-            total_loss
-            / total_samples
-        )
+            targets.append(
+                batch.y.detach()
+            )
+
+        if total_samples == 0:
+            raise RuntimeError(
+                "Training loader produced no samples."
+            )
+
+        metrics = {
+            "loss": (
+                total_loss
+                / total_samples
+            )
+        }
+
+        if predictions:
+            predictions_tensor = torch.cat(
+                predictions,
+                dim=0,
+            )
+
+            targets_tensor = torch.cat(
+                targets,
+                dim=0,
+            )
+
+            metrics["accuracy"] = (
+                self._accuracy(
+                    predictions_tensor,
+                    targets_tensor,
+                )
+            )
+
+            if self.metric_fn is not None:
+                metrics["custom_metric"] = (
+                    float(
+                        self.metric_fn(
+                            predictions_tensor,
+                            targets_tensor,
+                        )
+                    )
+                )
+
+        return metrics
 
     @torch.no_grad()
     def validate(
         self,
-        data_loader: DataLoader,
-    ) -> tuple[
-        float,
-        float,
-        float,
-    ]:
+        loader,
+    ) -> dict[str, float]:
 
         self.model.eval()
 
@@ -157,11 +202,11 @@ class Trainer:
 
         total_samples = 0
 
-        all_targets = []
+        predictions = []
 
-        all_predictions = []
+        targets = []
 
-        for batch in data_loader:
+        for batch in loader:
 
             batch = batch.to(
                 self.device
@@ -171,24 +216,13 @@ class Trainer:
                 batch
             )
 
-            targets = batch.y.view(
-                -1
-            )
-
-            loss = self.loss_function(
+            loss = self.criterion(
                 logits,
-                targets,
-            )
-
-            predictions = (
-                torch.argmax(
-                    logits,
-                    dim=-1,
-                )
+                batch.y,
             )
 
             batch_size = (
-                targets.size(0)
+                batch.y.shape[0]
             )
 
             total_loss += (
@@ -200,202 +234,212 @@ class Trainer:
                 batch_size
             )
 
-            all_targets.append(
-                targets.detach().cpu()
+            predictions.append(
+                logits
             )
 
-            all_predictions.append(
-                predictions.detach().cpu()
+            targets.append(
+                batch.y
             )
 
         if total_samples == 0:
             raise RuntimeError(
-                "Validation DataLoader "
-                "returned no samples."
+                "Validation loader produced no samples."
             )
 
-        y_true = torch.cat(
-            all_targets
+        predictions_tensor = torch.cat(
+            predictions,
+            dim=0,
         )
 
-        y_pred = torch.cat(
-            all_predictions
+        targets_tensor = torch.cat(
+            targets,
+            dim=0,
         )
 
-        accuracy = float(
-            (
-                y_true == y_pred
-            ).float().mean().item()
-        )
-
-        num_classes = len(
-            self.label_to_index
-        )
-
-        confusion = torch.zeros(
-            (
-                num_classes,
-                num_classes,
+        metrics = {
+            "loss": (
+                total_loss
+                / total_samples
             ),
-            dtype=torch.long,
-        )
-
-        for true_label, predicted_label in zip(
-            y_true,
-            y_pred,
-        ):
-
-            confusion[
-                true_label,
-                predicted_label,
-            ] += 1
-
-        true_positive = torch.diag(
-            confusion
-        ).float()
-
-        predicted_positive = (
-            confusion.sum(
-                dim=0
-            ).float()
-        )
-
-        actual_positive = (
-            confusion.sum(
-                dim=1
-            ).float()
-        )
-
-        precision = torch.where(
-            predicted_positive > 0,
-            true_positive
-            / predicted_positive,
-            torch.zeros_like(
-                true_positive
+            "accuracy": (
+                self._accuracy(
+                    predictions_tensor,
+                    targets_tensor,
+                )
             ),
-        )
+        }
 
-        recall = torch.where(
-            actual_positive > 0,
-            true_positive
-            / actual_positive,
-            torch.zeros_like(
-                true_positive
-            ),
-        )
+        if self.metric_fn is not None:
+            metrics["custom_metric"] = (
+                float(
+                    self.metric_fn(
+                        predictions_tensor,
+                        targets_tensor,
+                    )
+                )
+            )
 
-        f1 = torch.where(
-            precision + recall > 0,
-            2
-            * precision
-            * recall
-            / (
-                precision + recall
-            ),
-            torch.zeros_like(
-                precision
-            ),
-        )
-
-        macro_f1 = float(
-            f1.mean().item()
-        )
-
-        validation_loss = (
-            total_loss
-            / total_samples
-        )
-
-        return (
-            validation_loss,
-            accuracy,
-            macro_f1,
-        )
+        return metrics
 
     def fit(
         self,
-        train_loader: DataLoader,
-        validation_loader: DataLoader,
-        epochs: int,
-    ) -> TrainingHistory:
+        train_loader,
+        val_loader=None,
+        epochs: int = 10,
+        save_every: int = 1,
+    ) -> list[dict[str, float]]:
+
+        if epochs < 1:
+            raise ValueError(
+                "epochs must be >= 1."
+            )
+
+        if save_every < 1:
+            raise ValueError(
+                "save_every must be >= 1."
+            )
+
+        history = []
 
         for epoch in range(
-            1,
+            self.current_epoch + 1,
             epochs + 1,
         ):
 
-            train_loss = (
+            self.current_epoch = epoch
+
+            train_metrics = (
                 self.train_epoch(
                     train_loader
                 )
             )
 
-            (
-                validation_loss,
-                validation_accuracy,
-                validation_f1,
-            ) = self.validate(
-                validation_loader
-            )
+            if val_loader is not None:
+                val_metrics = (
+                    self.validate(
+                        val_loader
+                    )
+                )
+            else:
+                val_metrics = {}
 
-            self.history.train_loss.append(
-                train_loss
-            )
+            if self.scheduler is not None:
+                self.scheduler.step()
 
-            self.history.validation_loss.append(
-                validation_loss
-            )
+            epoch_record = {
+                "epoch": float(epoch),
+                "train_loss": train_metrics[
+                    "loss"
+                ],
+                "train_accuracy": train_metrics[
+                    "accuracy"
+                ],
+            }
 
-            self.history.validation_accuracy.append(
-                validation_accuracy
-            )
+            if val_metrics:
+                epoch_record[
+                    "val_loss"
+                ] = val_metrics["loss"]
 
-            self.history.validation_macro_f1.append(
-                validation_f1
-            )
+                epoch_record[
+                    "val_accuracy"
+                ] = val_metrics["accuracy"]
 
-            print(
-                f"Epoch {epoch:03d}/{epochs:03d} | "
-                f"Train Loss: {train_loss:.4f} | "
-                f"Val Loss: {validation_loss:.4f} | "
-                f"Val Acc: {validation_accuracy:.4f} | "
-                f"Val F1: {validation_f1:.4f}"
+            history.append(
+                epoch_record
             )
 
             if (
-                validation_f1
-                > self.best_validation_f1
+                val_metrics
+                and "accuracy" in val_metrics
             ):
 
-                self.best_validation_f1 = (
-                    validation_f1
+                current_metric = (
+                    val_metrics["accuracy"]
                 )
 
-                save_checkpoint(
-                    path=self.checkpoint_path,
-                    model=self.model,
-                    optimizer=self.optimizer,
-                    epoch=epoch,
-                    train_loss=train_loss,
-                    validation_loss=(
-                        validation_loss
-                    ),
-                    validation_f1=(
-                        validation_f1
-                    ),
-                    model_config=(
-                        self.model_config
-                    ),
-                    training_config=(
-                        self.training_config
-                    ),
-                    label_to_index=(
-                        self.label_to_index
-                    ),
+                is_best = (
+                    self.best_metric is None
+                    or current_metric
+                    > self.best_metric
                 )
 
-                print(
-                    "  ✓ Best checkpoint saved."
+                if is_best:
+
+                    self.best_metric = (
+                        current_metric
+                    )
+
+                    self.save_checkpoint(
+                        filename="best.pt",
+                        train_metrics=train_metrics,
+                        val_metrics=val_metrics,
+                    )
+
+            if (
+                epoch % save_every
+                == 0
+            ):
+
+                self.save_checkpoint(
+                    filename=(
+                        f"epoch_{epoch:04d}.pt"
+                    ),
+                    train_metrics=train_metrics,
+                    val_metrics=val_metrics,
                 )
 
-        return self.history
+        return history
+
+    def save_checkpoint(
+        self,
+        *,
+        filename: str,
+        train_metrics: dict[str, float],
+        val_metrics: dict[str, float],
+    ) -> Path:
+
+        return self.checkpoints.save(
+            filename=filename,
+            model=self.model,
+            optimizer=self.optimizer,
+            scheduler=self.scheduler,
+            epoch=self.current_epoch,
+            model_config=self.model_config,
+            label_mapping=self.label_mapping,
+            best_metric=self.best_metric,
+            train_metrics=train_metrics,
+            val_metrics=val_metrics,
+            metadata={
+                "device": str(
+                    self.device
+                ),
+            },
+        )
+
+    @staticmethod
+    def _accuracy(
+        logits: torch.Tensor,
+        targets: torch.Tensor,
+    ) -> float:
+
+        predictions = (
+            logits.argmax(
+                dim=-1
+            )
+        )
+
+        correct = (
+            predictions
+            == targets
+        ).sum().item()
+
+        total = targets.numel()
+
+        if total == 0:
+            return 0.0
+
+        return (
+            correct / total
+        )
