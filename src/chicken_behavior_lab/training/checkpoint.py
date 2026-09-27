@@ -4,116 +4,204 @@ from pathlib import Path
 from typing import Any
 
 import torch
-from torch import nn
-from torch.optim import Optimizer
+
+from chicken_behavior_lab.config.model_config import (
+    ModelConfig,
+)
 
 
-def save_checkpoint(
-    path: str | Path,
-    model: nn.Module,
-    optimizer: Optimizer | None = None,
-    epoch: int | None = None,
-    train_loss: float | None = None,
-    validation_loss: float | None = None,
-    validation_f1: float | None = None,
-    model_config: dict[str, Any] | None = None,
-    training_config: dict[str, Any] | None = None,
-    label_to_index: dict[str, int] | None = None,
-) -> None:
+CHECKPOINT_FORMAT_VERSION = 1
+
+
+class CheckpointManager:
     """
-    Save a complete training checkpoint.
+    Save and load complete training checkpoints.
 
-    The checkpoint contains model weights together with
-    the information required to reproduce the experiment.
+    A checkpoint contains everything required to reconstruct
+    the model and continue training or perform evaluation.
     """
 
-    checkpoint: dict[str, Any] = {
-        "model_state_dict": model.state_dict(),
-    }
+    def __init__(
+        self,
+        directory: str | Path,
+    ) -> None:
 
-    if optimizer is not None:
-        checkpoint[
-            "optimizer_state_dict"
-        ] = optimizer.state_dict()
+        self.directory = Path(directory)
 
-    if epoch is not None:
-        checkpoint["epoch"] = epoch
-
-    if train_loss is not None:
-        checkpoint["train_loss"] = train_loss
-
-    if validation_loss is not None:
-        checkpoint[
-            "validation_loss"
-        ] = validation_loss
-
-    if validation_f1 is not None:
-        checkpoint[
-            "validation_f1"
-        ] = validation_f1
-
-    if model_config is not None:
-        checkpoint[
-            "model_config"
-        ] = model_config
-
-    if training_config is not None:
-        checkpoint[
-            "training_config"
-        ] = training_config
-
-    if label_to_index is not None:
-        checkpoint[
-            "label_to_index"
-        ] = label_to_index
-
-    checkpoint_path = Path(path)
-
-    checkpoint_path.parent.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    torch.save(
-        checkpoint,
-        checkpoint_path,
-    )
-
-
-def load_checkpoint(
-    path: str | Path,
-    map_location: str | torch.device = "cpu",
-) -> dict[str, Any]:
-    """
-    Load a complete training checkpoint.
-    """
-
-    checkpoint_path = Path(path)
-
-    if not checkpoint_path.exists():
-        raise FileNotFoundError(
-            f"Checkpoint not found: "
-            f"{checkpoint_path}"
+        self.directory.mkdir(
+            parents=True,
+            exist_ok=True,
         )
 
-    checkpoint = torch.load(
-        checkpoint_path,
-        map_location=map_location,
-    )
+    def save(
+        self,
+        *,
+        filename: str,
+        model: torch.nn.Module,
+        optimizer: torch.optim.Optimizer | None,
+        scheduler: Any | None,
+        epoch: int,
+        model_config: ModelConfig,
+        label_mapping: dict[str, int],
+        best_metric: float | None = None,
+        train_metrics: dict[str, float] | None = None,
+        val_metrics: dict[str, float] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> Path:
 
-    if not isinstance(
-        checkpoint,
-        dict,
-    ):
-        raise ValueError(
-            "Checkpoint must contain "
-            "a dictionary."
+        model_config.validate()
+
+        checkpoint = {
+            "format_version": CHECKPOINT_FORMAT_VERSION,
+
+            "epoch": int(epoch),
+
+            "model_type": model_config.model_type,
+
+            "model_config": {
+                key: value
+                for key, value in vars(
+                    model_config
+                ).items()
+            },
+
+            "label_mapping": dict(
+                label_mapping
+            ),
+
+            "model_state_dict": (
+                model.state_dict()
+            ),
+
+            "optimizer_state_dict": (
+                optimizer.state_dict()
+                if optimizer is not None
+                else None
+            ),
+
+            "scheduler_state_dict": (
+                scheduler.state_dict()
+                if scheduler is not None
+                else None
+            ),
+
+            "best_metric": (
+                float(best_metric)
+                if best_metric is not None
+                else None
+            ),
+
+            "train_metrics": (
+                dict(train_metrics)
+                if train_metrics is not None
+                else {}
+            ),
+
+            "val_metrics": (
+                dict(val_metrics)
+                if val_metrics is not None
+                else {}
+            ),
+
+            "metadata": (
+                dict(metadata)
+                if metadata is not None
+                else {}
+            ),
+        }
+
+        path = self.directory / filename
+
+        torch.save(
+            checkpoint,
+            path,
         )
 
-    if "model_state_dict" not in checkpoint:
-        raise ValueError(
-            "Checkpoint does not contain "
-            "'model_state_dict'."
+        return path
+
+    def load(
+        self,
+        filename: str | Path,
+        map_location: str | torch.device = "cpu",
+    ) -> dict[str, Any]:
+
+        path = Path(filename)
+
+        if not path.is_absolute():
+            path = self.directory / path
+
+        if not path.exists():
+            raise FileNotFoundError(
+                f"Checkpoint not found: {path}"
+            )
+
+        checkpoint = torch.load(
+            path,
+            map_location=map_location,
+            weights_only=False,
         )
 
-    return checkpoint
+        self._validate_checkpoint(
+            checkpoint
+        )
+
+        return checkpoint
+
+    @staticmethod
+    def _validate_checkpoint(
+        checkpoint: Any,
+    ) -> None:
+
+        if not isinstance(
+            checkpoint,
+            dict,
+        ):
+            raise ValueError(
+                "Checkpoint must contain a dictionary."
+            )
+
+        required_keys = {
+            "format_version",
+            "epoch",
+            "model_type",
+            "model_config",
+            "label_mapping",
+            "model_state_dict",
+        }
+
+        missing = (
+            required_keys
+            - checkpoint.keys()
+        )
+
+        if missing:
+            raise ValueError(
+                "Checkpoint is missing required "
+                f"keys: {sorted(missing)}"
+            )
+
+        if (
+            checkpoint["format_version"]
+            > CHECKPOINT_FORMAT_VERSION
+        ):
+            raise ValueError(
+                "Checkpoint format is newer than "
+                "the current code."
+            )
+
+    @staticmethod
+    def build_model_config(
+        checkpoint: dict[str, Any],
+    ) -> ModelConfig:
+
+        config_dict = dict(
+            checkpoint["model_config"]
+        )
+
+        config = ModelConfig(
+            **config_dict
+        )
+
+        config.validate()
+
+        return config
