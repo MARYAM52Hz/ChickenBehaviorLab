@@ -31,6 +31,12 @@ from chicken_behavior_lab.training.temporal_evaluator import (
     TemporalPredictionRecord,
 )
 
+from chicken_behavior_lab.training.temporal_split import (
+    GroupSplit,
+    group_from_sample,
+    group_train_validation_test_split,
+)
+
 
 __all__ = [
     "ClassificationLoss",
@@ -50,4 +56,8 @@ __all__ = [
     "TemporalEvaluator",
     "TemporalEvaluationResult",
     "TemporalPredictionRecord",
+
+    "GroupSplit",
+    "group_from_sample",
+    "group_train_validation_test_split",
 ]
