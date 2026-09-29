@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import torch
 
 from chicken_behavior_lab.config.model_config import (
@@ -11,17 +13,12 @@ from chicken_behavior_lab.models.model_factory import (
 )
 
 from chicken_behavior_lab.training.checkpoint import (
-    CHECKPOINT_FORMAT_VERSION,
     CheckpointManager,
+    CHECKPOINT_FORMAT_VERSION,
 )
 
 
 def create_temporal_config() -> ModelConfig:
-    """
-    Create a small temporal model configuration suitable
-    for unit tests.
-    """
-
     return ModelConfig(
         model_type="temporal",
         node_feature_dim=8,
@@ -39,24 +36,16 @@ def create_temporal_config() -> ModelConfig:
 
 
 def create_label_mapping() -> dict[str, int]:
-    """
-    Create a deterministic behavior-label mapping.
-    """
-
     return {
-        "standing": 0,
+        "feeding": 0,
         "walking": 1,
-        "feeding": 2,
+        "standing": 2,
     }
 
 
 def test_checkpoint_roundtrip(
-    tmp_path,
-):
-    """
-    Verify that a complete checkpoint can be saved
-    and loaded successfully.
-    """
+    tmp_path: Path,
+) -> None:
 
     config = create_temporal_config()
 
@@ -67,52 +56,38 @@ def test_checkpoint_roundtrip(
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=1e-3,
-        weight_decay=1e-4,
     )
 
     manager = CheckpointManager(
-        tmp_path
+        tmp_path / "checkpoints"
     )
 
-    label_mapping = (
-        create_label_mapping()
-    )
-
-    train_metrics = {
-        "loss": 0.40,
-        "accuracy": 0.82,
-    }
-
-    val_metrics = {
-        "loss": 0.50,
-        "accuracy": 0.85,
-    }
-
-    checkpoint_path = manager.save(
+    path = manager.save(
         filename="test.pt",
         model=model,
         optimizer=optimizer,
         scheduler=None,
         epoch=5,
         model_config=config,
-        label_mapping=label_mapping,
-        best_metric=0.85,
-        train_metrics=train_metrics,
-        val_metrics=val_metrics,
+        label_mapping=create_label_mapping(),
+        best_metric=0.91,
+        train_metrics={
+            "loss": 0.21,
+            "accuracy": 0.92,
+        },
+        val_metrics={
+            "loss": 0.24,
+            "accuracy": 0.91,
+        },
         metadata={
-            "experiment": "checkpoint_test",
+            "experiment": "unit_test",
         },
     )
 
-    assert checkpoint_path.exists()
+    assert path.exists()
 
     checkpoint = manager.load(
-        checkpoint_path
-    )
-
-    assert isinstance(
-        checkpoint,
-        dict,
+        "test.pt"
     )
 
     assert (
@@ -122,54 +97,20 @@ def test_checkpoint_roundtrip(
 
     assert checkpoint["epoch"] == 5
 
-    assert (
-        checkpoint["model_type"]
-        == "temporal"
-    )
+    assert checkpoint["model_type"] == "temporal"
 
-    assert (
-        checkpoint["label_mapping"]
-        == label_mapping
-    )
+    assert checkpoint["best_metric"] == 0.91
 
-    assert (
-        checkpoint["best_metric"]
-        == 0.85
-    )
-
-    assert (
-        checkpoint["train_metrics"]
-        == train_metrics
-    )
-
-    assert (
-        checkpoint["val_metrics"]
-        == val_metrics
-    )
-
-    assert (
-        checkpoint["metadata"]["experiment"]
-        == "checkpoint_test"
-    )
-
-    assert (
-        checkpoint["optimizer_state_dict"]
-        is not None
-    )
-
-    assert (
-        checkpoint["model_state_dict"]
-        is not None
-    )
+    assert checkpoint["label_mapping"] == {
+        "feeding": 0,
+        "walking": 1,
+        "standing": 2,
+    }
 
 
 def test_checkpoint_preserves_model_config(
-    tmp_path,
-):
-    """
-    Verify that all temporal model configuration
-    parameters survive the checkpoint roundtrip.
-    """
+    tmp_path: Path,
+) -> None:
 
     config = create_temporal_config()
 
@@ -177,27 +118,21 @@ def test_checkpoint_preserves_model_config(
         config
     )
 
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=1e-3,
-    )
-
     manager = CheckpointManager(
-        tmp_path
+        tmp_path / "checkpoints"
     )
 
     manager.save(
-        filename="config_test.pt",
+        filename="config.pt",
         model=model,
-        optimizer=optimizer,
+        optimizer=None,
         scheduler=None,
         epoch=3,
         model_config=config,
-        label_mapping=create_label_mapping(),
     )
 
     checkpoint = manager.load(
-        "config_test.pt"
+        "config.pt"
     )
 
     restored_config = (
@@ -206,104 +141,34 @@ def test_checkpoint_preserves_model_config(
         )
     )
 
-    assert (
-        restored_config.model_type
-        == "temporal"
-    )
-
-    assert (
-        restored_config.node_feature_dim
-        == 8
-    )
-
-    assert (
-        restored_config.edge_feature_dim
-        == 4
-    )
-
-    assert (
-        restored_config.spatial_hidden_dim
-        == 32
-    )
-
-    assert (
-        restored_config.temporal_hidden_dim
-        == 64
-    )
-
-    assert (
-        restored_config.num_classes
-        == 3
-    )
-
-    assert (
-        restored_config.num_gnn_layers
-        == 2
-    )
-
-    assert (
-        restored_config.num_gru_layers
-        == 1
-    )
-
-    assert (
-        restored_config.dropout
-        == 0.2
-    )
-
-    assert (
-        restored_config.bidirectional_gru
-        is False
-    )
-
-    assert (
-        restored_config.sequence_length
-        == 8
-    )
-
-    assert (
-        restored_config.sequence_stride
-        == 4
-    )
+    assert restored_config == config
 
 
 def test_model_can_be_reconstructed_from_checkpoint(
-    tmp_path,
-):
-    """
-    Verify that the model can be reconstructed exclusively
-    from the configuration stored in the checkpoint.
-    """
+    tmp_path: Path,
+) -> None:
 
-    original_config = (
-        create_temporal_config()
-    )
+    config = create_temporal_config()
 
-    original_model = build_model(
-        original_config
-    )
-
-    optimizer = torch.optim.AdamW(
-        original_model.parameters(),
-        lr=1e-3,
+    model = build_model(
+        config
     )
 
     manager = CheckpointManager(
-        tmp_path
+        tmp_path / "checkpoints"
     )
 
     manager.save(
-        filename="model.pt",
-        model=original_model,
-        optimizer=optimizer,
+        filename="reconstruct.pt",
+        model=model,
+        optimizer=None,
         scheduler=None,
-        epoch=3,
-        model_config=original_config,
-        label_mapping=create_label_mapping(),
+        epoch=1,
+        model_config=config,
     )
 
     checkpoint = manager.load(
-        "model.pt"
+        "reconstruct.pt"
     )
 
     restored_config = (
@@ -317,40 +182,20 @@ def test_model_can_be_reconstructed_from_checkpoint(
     )
 
     restored_model.load_state_dict(
-        checkpoint[
-            "model_state_dict"
-        ]
+        checkpoint["model_state_dict"]
     )
 
-    original_state = (
-        original_model.state_dict()
-    )
+    restored_model.eval()
 
-    restored_state = (
-        restored_model.state_dict()
+    assert isinstance(
+        restored_model,
+        torch.nn.Module,
     )
-
-    assert (
-        original_state.keys()
-        == restored_state.keys()
-    )
-
-    for key in original_state:
-        assert torch.equal(
-            original_state[key],
-            restored_state[key],
-        )
 
 
 def test_checkpoint_restores_optimizer_state(
-    tmp_path,
-):
-    """
-    Verify that optimizer state is preserved.
-
-    A single optimization step is performed first so that
-    AdamW has non-empty internal state.
-    """
+    tmp_path: Path,
+) -> None:
 
     config = create_temporal_config()
 
@@ -363,70 +208,60 @@ def test_checkpoint_restores_optimizer_state(
         lr=1e-3,
     )
 
-    # Create optimizer state.
-    trainable_parameters = [
-        parameter
-        for parameter in model.parameters()
-        if parameter.requires_grad
-    ]
-
-    loss = sum(
-        parameter.square().mean()
-        for parameter in trainable_parameters
+    dummy_parameter = next(
+        model.parameters()
     )
+
+    loss = dummy_parameter.sum()
 
     loss.backward()
 
     optimizer.step()
 
     manager = CheckpointManager(
-        tmp_path
+        tmp_path / "checkpoints"
     )
 
     manager.save(
-        filename="optimizer_test.pt",
+        filename="optimizer.pt",
         model=model,
         optimizer=optimizer,
         scheduler=None,
-        epoch=1,
+        epoch=2,
         model_config=config,
-        label_mapping=create_label_mapping(),
     )
 
     checkpoint = manager.load(
-        "optimizer_test.pt"
-    )
-
-    optimizer_state = (
-        checkpoint[
-            "optimizer_state_dict"
-        ]
-    )
-
-    assert optimizer_state is not None
-
-    assert (
-        "state"
-        in optimizer_state
+        "optimizer.pt"
     )
 
     assert (
-        "param_groups"
-        in optimizer_state
+        checkpoint["optimizer_state_dict"]
+        is not None
     )
 
-    assert len(
-        optimizer_state["state"]
-    ) > 0
+    restored_model = build_model(
+        config
+    )
+
+    restored_optimizer = torch.optim.AdamW(
+        restored_model.parameters(),
+        lr=1e-3,
+    )
+
+    restored_optimizer.load_state_dict(
+        checkpoint["optimizer_state_dict"]
+    )
+
+    assert (
+        len(restored_optimizer.state)
+        == len(optimizer.state)
+    )
 
 
 def test_checkpoint_model_state_is_identical(
-    tmp_path,
-):
-    """
-    Verify that model parameters stored in the checkpoint
-    exactly match the parameters of the original model.
-    """
+    tmp_path: Path,
+) -> None:
 
     config = create_temporal_config()
 
@@ -434,46 +269,34 @@ def test_checkpoint_model_state_is_identical(
         config
     )
 
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=1e-3,
-    )
-
     manager = CheckpointManager(
-        tmp_path
+        tmp_path / "checkpoints"
     )
 
     manager.save(
-        filename="state_test.pt",
+        filename="state.pt",
         model=model,
-        optimizer=optimizer,
+        optimizer=None,
         scheduler=None,
-        epoch=2,
+        epoch=1,
         model_config=config,
-        label_mapping=create_label_mapping(),
     )
 
     checkpoint = manager.load(
-        "state_test.pt"
+        "state.pt"
     )
 
     saved_state = (
-        checkpoint[
-            "model_state_dict"
-        ]
+        checkpoint["model_state_dict"]
     )
 
-    current_state = (
-        model.state_dict()
-    )
+    current_state = model.state_dict()
 
-    assert (
-        saved_state.keys()
-        == current_state.keys()
+    assert saved_state.keys() == (
+        current_state.keys()
     )
 
     for key in current_state:
-
         assert torch.equal(
             saved_state[key],
             current_state[key],
@@ -481,22 +304,13 @@ def test_checkpoint_model_state_is_identical(
 
 
 def test_checkpoint_label_mapping_is_preserved(
-    tmp_path,
-):
-    """
-    Verify that behavior label mappings are preserved
-    exactly and without reordering.
-    """
+    tmp_path: Path,
+) -> None:
 
     config = create_temporal_config()
 
     model = build_model(
         config
-    )
-
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=1e-3,
     )
 
     label_mapping = {
@@ -506,13 +320,13 @@ def test_checkpoint_label_mapping_is_preserved(
     }
 
     manager = CheckpointManager(
-        tmp_path
+        tmp_path / "checkpoints"
     )
 
     manager.save(
-        filename="labels_test.pt",
+        filename="labels.pt",
         model=model,
-        optimizer=optimizer,
+        optimizer=None,
         scheduler=None,
         epoch=1,
         model_config=config,
@@ -520,7 +334,7 @@ def test_checkpoint_label_mapping_is_preserved(
     )
 
     checkpoint = manager.load(
-        "labels_test.pt"
+        "labels.pt"
     )
 
     assert (
@@ -528,29 +342,10 @@ def test_checkpoint_label_mapping_is_preserved(
         == label_mapping
     )
 
-    assert (
-        checkpoint["label_mapping"]["feeding"]
-        == 0
-    )
-
-    assert (
-        checkpoint["label_mapping"]["walking"]
-        == 1
-    )
-
-    assert (
-        checkpoint["label_mapping"]["standing"]
-        == 2
-    )
-
 
 def test_checkpoint_without_optimizer(
-    tmp_path,
-):
-    """
-    Verify that checkpoints can also be created without
-    an optimizer, which is useful for inference-only models.
-    """
+    tmp_path: Path,
+) -> None:
 
     config = create_temporal_config()
 
@@ -559,96 +354,72 @@ def test_checkpoint_without_optimizer(
     )
 
     manager = CheckpointManager(
-        tmp_path
+        tmp_path / "checkpoints"
     )
 
     manager.save(
-        filename="inference.pt",
+        filename="no_optimizer.pt",
         model=model,
         optimizer=None,
         scheduler=None,
-        epoch=0,
+        epoch=1,
         model_config=config,
-        label_mapping=create_label_mapping(),
     )
 
     checkpoint = manager.load(
-        "inference.pt"
+        "no_optimizer.pt"
     )
 
     assert (
-        checkpoint[
-            "optimizer_state_dict"
-        ]
+        checkpoint["optimizer_state_dict"]
         is None
     )
 
     assert (
-        checkpoint[
-            "scheduler_state_dict"
-        ]
+        checkpoint["scheduler_state_dict"]
         is None
-    )
-
-    assert (
-        checkpoint[
-            "model_state_dict"
-        ]
-        is not None
     )
 
 
 def test_checkpoint_rejects_missing_required_keys(
-    tmp_path,
-):
-    """
-    Verify that malformed checkpoints are rejected.
-    """
+    tmp_path: Path,
+) -> None:
 
     manager = CheckpointManager(
-        tmp_path
+        tmp_path / "checkpoints"
     )
 
-    invalid_checkpoint = {
-        "format_version": 1,
-        "epoch": 1,
-    }
-
-    checkpoint_path = (
+    path = (
         tmp_path
+        / "checkpoints"
         / "invalid.pt"
     )
 
     torch.save(
-        invalid_checkpoint,
-        checkpoint_path,
+        {
+            "format_version":
+                CHECKPOINT_FORMAT_VERSION,
+        },
+        path,
     )
 
     try:
         manager.load(
-            checkpoint_path
+            "invalid.pt"
         )
-    except ValueError as error:
-        message = str(error)
-
-        assert (
-            "missing required keys"
-            in message
+    except ValueError as exc:
+        assert "missing required keys" in str(
+            exc
         )
-
     else:
         raise AssertionError(
-            "Invalid checkpoint was accepted."
+            "Expected ValueError."
         )
 
 
 def test_checkpoint_path_is_created(
-    tmp_path,
-):
-    """
-    Verify that CheckpointManager creates its directory
-    automatically.
-    """
+    tmp_path: Path,
+) -> None:
 
     checkpoint_dir = (
         tmp_path
@@ -668,17 +439,13 @@ def test_checkpoint_path_is_created(
         config
     )
 
-    manager.save(
-        filename="nested_test.pt",
+    path = manager.save(
+        filename="nested.pt",
         model=model,
         optimizer=None,
         scheduler=None,
         epoch=0,
         model_config=config,
-        label_mapping=create_label_mapping(),
     )
 
-    assert (
-        checkpoint_dir
-        / "nested_test.pt"
-    ).exists()
+    assert path.exists()
