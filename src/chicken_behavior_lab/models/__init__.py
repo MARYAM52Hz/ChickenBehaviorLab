@@ -1,9 +1,5 @@
-from chicken_behavior_lab.models.edge_aware_gnn import (
-    EdgeAwareGNN,
-)
-
-from chicken_behavior_lab.models.graph_pooling import (
-    GraphMeanPooling,
+from chicken_behavior_lab.models.spatial_encoder import (
+    SpatialGraphEncoder,
 )
 
 from chicken_behavior_lab.models.temporal_encoder import (
@@ -18,10 +14,14 @@ from chicken_behavior_lab.models.model_factory import (
     build_model,
 )
 
+from chicken_behavior_lab.models.baseline import (
+    ChickenBehaviorGNN,
+)
+
 
 __all__ = [
-    "EdgeAwareGNN",
-    "GraphMeanPooling",
+    "ChickenBehaviorGNN",
+    "SpatialGraphEncoder",
     "GRUTemporalEncoder",
     "TemporalBehaviorGNN",
     "build_model",
