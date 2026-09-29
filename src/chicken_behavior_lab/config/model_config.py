@@ -5,40 +5,40 @@ from dataclasses import dataclass
 
 @dataclass(slots=True)
 class ModelConfig:
+    """
+    Configuration for ChickenBehaviorLab models.
 
-    model_type: str = "baseline"
+    Supports both:
+        - spatial/baseline graph models
+        - temporal spatio-temporal graph models
+    """
 
-    node_feature_dim: int = 8
+    model_type: str
 
-    edge_feature_dim: int = 4
+    node_feature_dim: int
+    edge_feature_dim: int | None
 
-    spatial_hidden_dim: int = 64
+    spatial_hidden_dim: int
+    temporal_hidden_dim: int
 
-    temporal_hidden_dim: int = 128
-
-    num_classes: int = 2
+    num_classes: int
 
     num_gnn_layers: int = 2
-
     num_gru_layers: int = 1
 
-    dropout: float = 0.2
+    dropout: float = 0.0
 
     bidirectional_gru: bool = False
 
-    sequence_length: int = 16
+    sequence_length: int = 1
+    sequence_stride: int = 1
 
-    sequence_stride: int = 4
+    hidden_dim: int | None = None
 
-    def validate(self) -> None:
-
-        if self.model_type not in {
-            "baseline",
-            "temporal",
-        }:
+    def __post_init__(self) -> None:
+        if not self.model_type:
             raise ValueError(
-                "model_type must be either "
-                "'baseline' or 'temporal'."
+                "model_type cannot be empty."
             )
 
         if self.node_feature_dim < 1:
@@ -46,9 +46,12 @@ class ModelConfig:
                 "node_feature_dim must be >= 1."
             )
 
-        if self.edge_feature_dim < 1:
+        if (
+            self.edge_feature_dim is not None
+            and self.edge_feature_dim < 1
+        ):
             raise ValueError(
-                "edge_feature_dim must be >= 1."
+                "edge_feature_dim must be >= 1 or None."
             )
 
         if self.spatial_hidden_dim < 1:
@@ -91,6 +94,8 @@ class ModelConfig:
                 "sequence_stride must be >= 1."
             )
 
-    @property
-    def is_temporal(self) -> bool:
-        return self.model_type == "temporal"
+        if self.hidden_dim is not None:
+            if self.hidden_dim < 1:
+                raise ValueError(
+                    "hidden_dim must be >= 1 or None."
+                )
