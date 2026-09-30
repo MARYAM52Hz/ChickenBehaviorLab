@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-from typing import Sequence
+from collections.abc import Sequence
 
 import torch
-from torch.utils.data import DataLoader
-from torch_geometric.data import Batch
 
 from chicken_behavior_lab.dataset.temporal_batch import (
     TemporalBatch,
@@ -13,231 +11,196 @@ from chicken_behavior_lab.dataset.temporal_batch import (
 
 class TemporalCollator:
     """
-    Collate temporal graph sequences.
+    Collate temporal PyG Data objects into TemporalBatch.
 
-    Every temporal frame becomes one PyG Batch.
+    Required shapes per sample:
 
-    Therefore:
+        x:
+            [T, N, F_node]
 
-        frame_batches[t]
+        edge_index:
+            [2, E]
 
-    contains the B graphs belonging to temporal step t.
+        edge_attr:
+            [T, E, F_edge]
     """
 
     def __call__(
         self,
-        items: Sequence[dict],
+        data_list: Sequence,
     ) -> TemporalBatch:
 
-        if not items:
+        if not data_list:
             raise ValueError(
-                "TemporalCollator received an empty batch."
+                "Cannot collate an empty batch."
             )
 
-        sequence_lengths = {
-            len(item["graphs"])
-            for item in items
-        }
+        x_list = [
+            data.x
+            for data in data_list
+        ]
 
-        if len(sequence_lengths) != 1:
+        edge_indices = [
+            data.edge_index
+            for data in data_list
+        ]
+
+        y_list = [
+            data.y.view(-1)[0]
+            for data in data_list
+        ]
+
+        reference_x = x_list[0]
+
+        reference_edge_index = (
+            edge_indices[0]
+        )
+
+        for index, x in enumerate(
+            x_list
+        ):
+            if x.shape != reference_x.shape:
+                raise ValueError(
+                    "All temporal samples in a batch "
+                    "must have identical x shapes. "
+                    f"Sample 0: {tuple(reference_x.shape)}, "
+                    f"sample {index}: {tuple(x.shape)}."
+                )
+
+        for index, edge_index in enumerate(
+            edge_indices
+        ):
+            if not torch.equal(
+                edge_index,
+                reference_edge_index,
+            ):
+                raise ValueError(
+                    "All temporal samples in a batch "
+                    "must have identical graph topology. "
+                    f"Mismatch at sample {index}."
+                )
+
+        edge_attr_list = [
+            getattr(
+                data,
+                "edge_attr",
+                None,
+            )
+            for data in data_list
+        ]
+
+        has_edge_attr = [
+            value is not None
+            for value in edge_attr_list
+        ]
+
+        if any(
+            has_edge_attr
+        ) and not all(
+            has_edge_attr
+        ):
             raise ValueError(
-                "All temporal sequences in a batch "
-                "must have the same sequence length."
-            )
-
-        sequence_length = sequence_lengths.pop()
-
-        frame_batches: list[Batch] = []
-
-        x_frames: list[torch.Tensor] = []
-
-        edge_indices: list[torch.Tensor] = []
-
-        edge_attrs: list[
-            torch.Tensor | None
-        ] = []
-
-        for t in range(sequence_length):
-
-            graphs_at_t = [
-                item["graphs"][t]
-                for item in items
-            ]
-
-            pyg_batch = Batch.from_data_list(
-                graphs_at_t
-            )
-
-            frame_batches.append(
-                pyg_batch
-            )
-
-            x_frames.append(
-                self._stack_node_features(
-                    graphs_at_t
-                )
-            )
-
-            edge_indices.append(
-                pyg_batch.edge_index
-            )
-
-            edge_attrs.append(
-                self._stack_edge_attributes(
-                    graphs_at_t
-                )
+                "Either all temporal samples must contain "
+                "edge_attr or none may contain it."
             )
 
         x = torch.stack(
-            x_frames,
-            dim=1,
+            x_list,
+            dim=0,
+        )
+
+        edge_index = (
+            reference_edge_index
         )
 
         y = torch.stack(
-            [
-                item["y"].reshape(())
-                for item in items
-            ]
+            y_list,
+            dim=0,
         ).long()
 
-        track_id = torch.tensor(
-            [
-                item["track_id"]
-                for item in items
-            ],
-            dtype=torch.long,
-        )
-
-        start_frame = torch.tensor(
-            [
-                item["start_frame"]
-                for item in items
-            ],
-            dtype=torch.long,
-        )
-
-        end_frame = torch.tensor(
-            [
-                item["end_frame"]
-                for item in items
-            ],
-            dtype=torch.long,
-        )
-
-        return TemporalBatch(
-            x=x,
-            edge_index=edge_indices,
-            edge_attr=edge_attrs,
-            y=y,
-            sample_id=[
-                item["sample_id"]
-                for item in items
-            ],
-            video_id=[
-                item["video_id"]
-                for item in items
-            ],
-            track_id=track_id,
-            start_frame=start_frame,
-            end_frame=end_frame,
-            behavior_id=[
-                item["behavior_id"]
-                for item in items
-            ],
-            frame_batches=frame_batches,
-        )
-
-    @staticmethod
-    def _stack_node_features(
-        graphs,
-    ) -> torch.Tensor:
-        """
-        Return:
-
-            [B, N, F]
-        """
-
-        node_counts = {
-            graph.x.shape[0]
-            for graph in graphs
-        }
-
-        if len(node_counts) != 1:
-            raise ValueError(
-                "All graphs in a temporal batch must "
-                "have the same number of nodes."
-            )
-
-        return torch.stack(
-            [
-                graph.x
-                for graph in graphs
-            ],
-            dim=0,
-        )
-
-    @staticmethod
-    def _stack_edge_attributes(
-        graphs,
-    ) -> torch.Tensor | None:
-        """
-        Return:
-
-            [B, E, D]
-
-        or None.
-        """
-
-        attrs = [
-            graph.edge_attr
-            for graph in graphs
-        ]
+        edge_attr = None
 
         if all(
-            attr is None
-            for attr in attrs
+            has_edge_attr
         ):
-            return None
-
-        if any(
-            attr is None
-            for attr in attrs
-        ):
-            raise ValueError(
-                "Some graphs contain edge_attr while "
-                "others do not."
+            edge_attr = torch.stack(
+                edge_attr_list,
+                dim=0,
             )
 
-        first = attrs[0]
+        batch = TemporalBatch(
+            x=x,
+            edge_index=edge_index,
+            edge_attr=edge_attr,
+            y=y,
 
-        for attr in attrs[1:]:
-            if attr.shape != first.shape:
-                raise ValueError(
-                    "Edge attribute shapes must be "
-                    "identical within a temporal frame."
-                )
+            sample_id=[
+                str(data.sample_id)
+                for data in data_list
+            ],
 
-        return torch.stack(
-            attrs,
-            dim=0,
+            video_id=[
+                str(data.video_id)
+                for data in data_list
+            ],
+
+            track_id=torch.tensor(
+                [
+                    int(data.track_id)
+                    for data in data_list
+                ],
+                dtype=torch.long,
+            ),
+
+            start_frame=torch.tensor(
+                [
+                    int(data.start_frame)
+                    for data in data_list
+                ],
+                dtype=torch.long,
+            ),
+
+            end_frame=torch.tensor(
+                [
+                    int(data.end_frame)
+                    for data in data_list
+                ],
+                dtype=torch.long,
+            ),
+
+            behavior_id=[
+                str(data.behavior_id)
+                for data in data_list
+            ],
         )
+
+        batch.validate()
+
+        return batch
 
 
 def make_temporal_dataloader(
     dataset,
-    batch_size: int = 8,
+    batch_size: int,
     shuffle: bool = False,
     num_workers: int = 0,
-    pin_memory: bool = False,
-    drop_last: bool = False,
-) -> DataLoader:
+):
+    if batch_size < 1:
+        raise ValueError(
+            "batch_size must be >= 1."
+        )
+
+    if num_workers < 0:
+        raise ValueError(
+            "num_workers must be >= 0."
+        )
+
+    from torch.utils.data import DataLoader
 
     return DataLoader(
         dataset,
         batch_size=batch_size,
         shuffle=shuffle,
         num_workers=num_workers,
-        pin_memory=pin_memory,
-        drop_last=drop_last,
         collate_fn=TemporalCollator(),
     )
