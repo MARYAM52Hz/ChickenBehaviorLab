@@ -1,81 +1,102 @@
 from __future__ import annotations
 
-from typing import Sequence
+from collections.abc import Iterator, Sequence
 
-from chicken_behavior_lab.dataset.temporal_builder import (
-    TemporalSequenceBuilder,
-    TemporalWindow,
+from chicken_behavior_lab.dataset.temporal_sample import (
+    TemporalGraphSample,
 )
 
 
 class TemporalGraphDataset:
     """
-    Dataset of temporal graph windows.
-
-    This class does not create windows itself. Windows are created
-    by TemporalSequenceBuilder and passed here.
+    In-memory dataset of temporal graph samples.
     """
 
     def __init__(
         self,
-        windows: Sequence[TemporalWindow],
+        samples: Sequence[TemporalGraphSample],
     ) -> None:
 
-        self.windows = list(windows)
+        self.samples = list(
+            samples
+        )
 
-        if not self.windows:
-            raise ValueError(
-                "TemporalGraphDataset cannot be empty."
+        self._validate()
+
+    def _validate(self) -> None:
+        sample_ids: set[str] = set()
+
+        for sample in self.samples:
+            if not isinstance(
+                sample,
+                TemporalGraphSample,
+            ):
+                raise TypeError(
+                    "Every dataset item must be a "
+                    "TemporalGraphSample."
+                )
+
+            sample.validate()
+
+            if sample.sample_id in sample_ids:
+                raise ValueError(
+                    "Duplicate sample_id: "
+                    f"{sample.sample_id}"
+                )
+
+            sample_ids.add(
+                sample.sample_id
             )
 
     def __len__(self) -> int:
-        return len(self.windows)
+        return len(
+            self.samples
+        )
 
     def __getitem__(
         self,
         index: int,
-    ) -> TemporalWindow:
+    ) -> TemporalGraphSample:
+        return self.samples[index]
 
-        return self.windows[index]
-
-    @property
-    def sample_ids(self) -> list[str]:
-        return [
-            window.sample_id
-            for window in self.windows
-        ]
-
-    @property
-    def video_ids(self) -> list[str]:
-        return [
-            window.video_id
-            for window in self.windows
-        ]
+    def __iter__(
+        self,
+    ) -> Iterator[TemporalGraphSample]:
+        return iter(
+            self.samples
+        )
 
     @property
-    def track_ids(self) -> list[int]:
+    def labels(self) -> list[int]:
         return [
-            window.track_id
-            for window in self.windows
+            sample.label
+            for sample in self.samples
         ]
 
     @property
     def behavior_ids(self) -> list[str]:
         return [
-            window.behavior_id
-            for window in self.windows
+            sample.behavior_id
+            for sample in self.samples
         ]
 
     @property
-    def start_frames(self) -> list[int]:
+    def sample_ids(self) -> list[str]:
         return [
-            window.start_frame
-            for window in self.windows
+            sample.sample_id
+            for sample in self.samples
         ]
 
     @property
-    def end_frames(self) -> list[int]:
+    def video_ids(self) -> list[str | None]:
         return [
-            window.end_frame
-            for window in self.windows
+            sample.video_id
+            for sample in self.samples
+        ]
+
+    @property
+    def track_ids(self) -> list[int | None]:
+        return [
+            sample.track_id
+            for sample in self.samples
         ]
