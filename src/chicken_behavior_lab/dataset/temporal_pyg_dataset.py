@@ -1,178 +1,307 @@
 from __future__ import annotations
 
-from typing import Sequence
+from collections.abc import Sequence
+from typing import Any
 
 import torch
 from torch_geometric.data import Data
 
-from chicken_behavior_lab.dataset.temporal_builder import (
-    TemporalWindow,
+from chicken_behavior_lab.dataset.temporal_sample import (
+    TemporalGraphSample,
 )
 
 
 class TemporalPyGDataset:
     """
-    Convert TemporalWindow objects into PyG-compatible
-    temporal graph samples.
+    Convert TemporalGraphSample objects into PyTorch-compatible
+    temporal graph Data objects.
 
-    Each item represents one temporal sequence.
+    Output tensor shapes:
 
-    Expected structure of each frame sample:
+        x:
+            [T, N, F_node]
 
-        sample.x
-        sample.edge_index
-        sample.edge_attr
-        sample.y
+        edge_index:
+            [2, E]
 
-    The implementation intentionally keeps temporal frames
-    separate. TemporalCollator is responsible for batching
-    them.
+        edge_attr:
+            [T, E, F_edge]
+
+        y:
+            [1]
     """
 
     def __init__(
         self,
-        windows: Sequence[TemporalWindow],
+        samples: Sequence[TemporalGraphSample],
     ) -> None:
 
-        self.windows = list(windows)
+        self.samples = list(
+            samples
+        )
 
-        if not self.windows:
-            raise ValueError(
-                "TemporalPyGDataset cannot be empty."
+        self._validate()
+
+        self.label_to_index = (
+            self._build_label_mapping()
+        )
+
+    def _validate(self) -> None:
+        sample_ids: set[str] = set()
+
+        for sample in self.samples:
+            if not isinstance(
+                sample,
+                TemporalGraphSample,
+            ):
+                raise TypeError(
+                    "Every item must be a "
+                    "TemporalGraphSample."
+                )
+
+            sample.validate()
+
+            if sample.sample_id in sample_ids:
+                raise ValueError(
+                    "Duplicate sample_id: "
+                    f"{sample.sample_id}"
+                )
+
+            sample_ids.add(
+                sample.sample_id
             )
 
+    def _build_label_mapping(
+        self,
+    ) -> dict[str, int]:
+
+        mapping: dict[str, int] = {}
+
+        for sample in self.samples:
+
+            if sample.behavior_id in mapping:
+                expected = mapping[
+                    sample.behavior_id
+                ]
+
+                if expected != sample.label:
+                    raise ValueError(
+                        "Inconsistent label mapping for "
+                        f"behavior '{sample.behavior_id}': "
+                        f"expected {expected}, "
+                        f"found {sample.label}."
+                    )
+
+            else:
+                mapping[
+                    sample.behavior_id
+                ] = sample.label
+
+        return dict(
+            sorted(
+                mapping.items(),
+                key=lambda item: item[1],
+            )
+        )
+
     def __len__(self) -> int:
-        return len(self.windows)
+        return len(
+            self.samples
+        )
 
     def __getitem__(
         self,
         index: int,
-    ) -> dict:
-
-        window = self.windows[index]
-
-        frames = []
-
-        for sample in window.samples:
-            frames.append(
-                self._sample_to_pyg(
-                    sample
-                )
-            )
-
-        return {
-            "graphs": frames,
-            "y": self._label_to_tensor(
-                window.behavior_id
-            ),
-            "sample_id": window.sample_id,
-            "video_id": window.video_id,
-            "track_id": window.track_id,
-            "start_frame": window.start_frame,
-            "end_frame": window.end_frame,
-            "behavior_id": window.behavior_id,
-        }
-
-    @staticmethod
-    def _sample_to_pyg(
-        sample,
     ) -> Data:
-        """
-        Convert one graph sample to PyG Data.
-        """
 
-        x = getattr(
-            sample,
-            "x",
-            None,
+        sample = self.samples[
+            index
+        ]
+
+        sample.validate()
+
+        graphs = sample.graphs
+
+        first_graph = graphs[0].graph
+
+        reference_node_shape = (
+            first_graph.node_features.shape
         )
 
-        edge_index = getattr(
-            sample,
-            "edge_index",
-            None,
+        reference_edge_index = (
+            first_graph.edge_index
         )
 
-        edge_attr = getattr(
-            sample,
-            "edge_attr",
-            None,
+        reference_edge_shape = (
+            first_graph.edge_features.shape
+            if first_graph.edge_features is not None
+            else None
         )
 
-        if x is None:
-            raise ValueError(
-                "Graph sample does not contain x."
-            )
+        node_features: list[torch.Tensor] = []
+        edge_features: list[torch.Tensor] = []
 
-        if edge_index is None:
-            raise ValueError(
-                "Graph sample does not contain "
-                "edge_index."
-            )
+        has_edge_features = (
+            first_graph.edge_features
+            is not None
+        )
 
-        if not isinstance(
-            x,
-            torch.Tensor,
+        for time_index, graph_sample in enumerate(
+            graphs
         ):
-            x = torch.as_tensor(
-                x,
-                dtype=torch.float32,
-            )
 
-        if not isinstance(
-            edge_index,
-            torch.Tensor,
-        ):
-            edge_index = torch.as_tensor(
-                edge_index,
-                dtype=torch.long,
-            )
+            graph = graph_sample.graph
 
-        if edge_attr is not None:
-            if not isinstance(
-                edge_attr,
-                torch.Tensor,
+            if (
+                graph.node_features.shape
+                != reference_node_shape
             ):
-                edge_attr = torch.as_tensor(
-                    edge_attr,
+                raise ValueError(
+                    "All graphs in a temporal sample must have "
+                    "the same node feature shape. "
+                    f"Mismatch at time index {time_index}."
+                )
+
+            if not torch.equal(
+                torch.as_tensor(
+                    graph.edge_index,
+                    dtype=torch.long,
+                ),
+                torch.as_tensor(
+                    reference_edge_index,
+                    dtype=torch.long,
+                ),
+            ):
+                raise ValueError(
+                    "All graphs in a temporal sample must have "
+                    "identical edge topology. "
+                    f"Mismatch at time index {time_index}."
+                )
+
+            current_has_edge_features = (
+                graph.edge_features is not None
+            )
+
+            if (
+                current_has_edge_features
+                != has_edge_features
+            ):
+                raise ValueError(
+                    "Either all graphs in a temporal sample "
+                    "must have edge features or none may have them."
+                )
+
+            if has_edge_features:
+                if (
+                    graph.edge_features.shape
+                    != reference_edge_shape
+                ):
+                    raise ValueError(
+                        "All graphs in a temporal sample must have "
+                        "the same edge feature shape."
+                    )
+
+            node_features.append(
+                torch.as_tensor(
+                    graph.node_features,
                     dtype=torch.float32,
                 )
-
-        return Data(
-            x=x,
-            edge_index=edge_index,
-            edge_attr=edge_attr,
-        )
-
-    @staticmethod
-    def _label_to_tensor(
-        label,
-    ) -> torch.Tensor:
-        """
-        Convert a numeric label directly.
-
-        String labels are intentionally not converted here.
-        The label encoder belongs to the experiment/config
-        layer.
-        """
-
-        if isinstance(
-            label,
-            torch.Tensor,
-        ):
-            return label.long()
-
-        if isinstance(
-            label,
-            int,
-        ):
-            return torch.tensor(
-                label,
-                dtype=torch.long,
             )
 
-        raise TypeError(
-            "TemporalPyGDataset expects an integer "
-            "behavior label or a torch.Tensor. "
-            f"Received: {type(label).__name__}"
+            if has_edge_features:
+                edge_features.append(
+                    torch.as_tensor(
+                        graph.edge_features,
+                        dtype=torch.float32,
+                    )
+                )
+
+        x = torch.stack(
+            node_features,
+            dim=0,
         )
+
+        edge_index = torch.as_tensor(
+            reference_edge_index,
+            dtype=torch.long,
+        )
+
+        data = Data(
+            x=x,
+            edge_index=edge_index,
+            y=torch.tensor(
+                [sample.label],
+                dtype=torch.long,
+            ),
+        )
+
+        if has_edge_features:
+            data.edge_attr = torch.stack(
+                edge_features,
+                dim=0,
+            )
+
+        data.sample_id = (
+            sample.sample_id
+        )
+
+        data.video_id = (
+            sample.video_id or ""
+        )
+
+        data.track_id = (
+            -1
+            if sample.track_id is None
+            else int(sample.track_id)
+        )
+
+        data.start_frame = int(
+            sample.first_frame
+        )
+
+        data.end_frame = int(
+            sample.last_frame
+        )
+
+        data.behavior_id = (
+            sample.behavior_id
+        )
+
+        data.sequence_length = (
+            len(sample)
+        )
+
+        return data
+
+    @property
+    def samples_metadata(
+        self,
+    ) -> list[dict[str, Any]]:
+
+        metadata_list: list[
+            dict[str, Any]
+        ] = []
+
+        for sample in self.samples:
+
+            metadata = dict(
+                sample.metadata or {}
+            )
+
+            metadata["sample_id"] = (
+                sample.sample_id
+            )
+
+            metadata["behavior_id"] = (
+                sample.behavior_id
+            )
+
+            metadata["label"] = int(
+                sample.label
+            )
+
+            metadata_list.append(
+                metadata
+            )
+
+        return metadata_list
