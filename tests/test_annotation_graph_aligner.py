@@ -1,11 +1,7 @@
 from __future__ import annotations
 
-import numpy as np
-import pytest
-
-from chicken_behavior_lab.alignment import (
-    AnnotationGraphAligner,
-)
+from dataclasses import dataclass
+from typing import Sequence
 
 from chicken_behavior_lab.annotations.schema import (
     AnnotationSet,
@@ -17,503 +13,580 @@ from chicken_behavior_lab.dataset.sample import (
 )
 
 
-class DummyGraph:
-    def __init__(self) -> None:
+@dataclass(frozen=True, slots=True)
+class AlignmentConflict:
+    """
+    Description of a conflicting annotation for one graph sample.
+    """
 
-        self.node_features = np.zeros(
-            (3, 4),
-            dtype=np.float32,
+    sample_id: str
+    video_id: str
+    track_id: int
+    frame: int
+    behavior_ids: tuple[str, ...]
+
+
+@dataclass(slots=True)
+class AlignmentResult:
+    """
+    Result of aligning annotations with graph samples.
+    """
+
+    labeled_samples: list[GraphSample]
+    unlabeled_samples: list[GraphSample]
+    conflicts: list[AlignmentConflict]
+
+    @property
+    def num_labeled(self) -> int:
+        return len(
+            self.labeled_samples
         )
 
-        self.edge_index = np.array(
-            [
-                [0, 1],
-                [1, 2],
-            ],
-            dtype=np.int64,
+    @property
+    def num_unlabeled(self) -> int:
+        return len(
+            self.unlabeled_samples
         )
 
-        self.edge_features = None
+    @property
+    def num_conflicts(self) -> int:
+        return len(
+            self.conflicts
+        )
+
+    @property
+    def total_samples(self) -> int:
+        return (
+            self.num_labeled
+            + self.num_unlabeled
+            + self.num_conflicts
+        )
 
     def validate(self) -> None:
-        pass
+        sample_ids: set[str] = set()
+
+        for sample in self.labeled_samples:
+            sample.validate()
+
+            if sample.sample_id in sample_ids:
+                raise ValueError(
+                    "Duplicate sample_id in alignment result: "
+                    f"{sample.sample_id}"
+                )
+
+            sample_ids.add(
+                sample.sample_id
+            )
+
+        for sample in self.unlabeled_samples:
+            sample.validate()
+
+            if sample.sample_id in sample_ids:
+                raise ValueError(
+                    "A sample cannot appear in both labeled and "
+                    f"unlabeled collections: {sample.sample_id}"
+                )
+
+            sample_ids.add(
+                sample.sample_id
+            )
+
+        conflict_ids = {
+            conflict.sample_id
+            for conflict in self.conflicts
+        }
+
+        if sample_ids & conflict_ids:
+            raise ValueError(
+                "A sample cannot appear in labeled/unlabeled "
+                "collections and conflicts simultaneously."
+            )
 
 
-def make_graph_sample(
-    sample_id: str,
-    frame: int,
-    *,
-    video_id: str = "video_001",
-    track_id: int = 1,
-) -> GraphSample:
+class AnnotationGraphAligner:
+    """
+    Align BehaviorAnnotation objects with GraphSample objects.
 
-    return GraphSample(
-        graph=DummyGraph(),
-        label=0,
-        behavior_id="unknown",
-        sample_id=sample_id,
-        metadata={
-            "video_id": video_id,
-            "track_id": track_id,
-            "start_frame": frame,
-            "end_frame": frame,
-        },
-    )
+    Matching key:
 
+        video_id + track_id + frame interval
 
-def make_annotation(
-    annotation_id: str,
-    start_frame: int,
-    end_frame: int,
-    behavior_id: str,
-    *,
-    video_id: str = "video_001",
-    track_id: int = 1,
-) -> BehaviorAnnotation:
+    The aligner does not perform train/validation/test splitting.
+    """
 
-    return BehaviorAnnotation(
-        annotation_id=annotation_id,
-        video_id=video_id,
-        track_id=track_id,
-        behavior_id=behavior_id,
-        start_frame=start_frame,
-        end_frame=end_frame,
-        annotator="annotator_001",
-        confidence=0.95,
-    )
+    def __init__(
+        self,
+        *,
+        strict_conflicts: bool = True,
+        require_full_coverage: bool = False,
+    ) -> None:
 
-
-def test_annotation_graph_alignment() -> None:
-
-    samples = [
-        make_graph_sample(
-            "sample_001",
-            10,
-        ),
-        make_graph_sample(
-            "sample_002",
-            11,
-        ),
-        make_graph_sample(
-            "sample_003",
-            12,
-        ),
-    ]
-
-    annotations = AnnotationSet(
-        annotations=[
-            make_annotation(
-                "ann_001",
-                10,
-                11,
-                "feeding",
-            ),
-            make_annotation(
-                "ann_002",
-                12,
-                12,
-                "walking",
-            ),
-        ]
-    )
-
-    aligner = AnnotationGraphAligner()
-
-    result = aligner.align(
-        samples,
-        annotations,
-    )
-
-    assert result.num_labeled == 3
-    assert result.num_unlabeled == 0
-    assert result.num_conflicts == 0
-
-    assert (
-        result.labeled_samples[0].behavior_id
-        == "feeding"
-    )
-
-    assert (
-        result.labeled_samples[1].behavior_id
-        == "feeding"
-    )
-
-    assert (
-        result.labeled_samples[2].behavior_id
-        == "walking"
-    )
-
-
-def test_unlabeled_sample_is_preserved() -> None:
-
-    samples = [
-        make_graph_sample(
-            "sample_001",
-            10,
-        ),
-        make_graph_sample(
-            "sample_002",
-            20,
-        ),
-    ]
-
-    annotations = AnnotationSet(
-        annotations=[
-            make_annotation(
-                "ann_001",
-                10,
-                10,
-                "feeding",
-            ),
-        ]
-    )
-
-    aligner = AnnotationGraphAligner()
-
-    result = aligner.align(
-        samples,
-        annotations,
-    )
-
-    assert result.num_labeled == 1
-    assert result.num_unlabeled == 1
-
-    assert (
-        result.unlabeled_samples[0].sample_id
-        == "sample_002"
-    )
-
-
-def test_track_id_prevents_wrong_alignment() -> None:
-
-    samples = [
-        make_graph_sample(
-            "sample_001",
-            10,
-            track_id=1,
-        ),
-        make_graph_sample(
-            "sample_002",
-            10,
-            track_id=2,
-        ),
-    ]
-
-    annotations = AnnotationSet(
-        annotations=[
-            make_annotation(
-                "ann_001",
-                10,
-                10,
-                "feeding",
-                track_id=1,
-            ),
-        ]
-    )
-
-    aligner = AnnotationGraphAligner()
-
-    result = aligner.align(
-        samples,
-        annotations,
-    )
-
-    assert result.num_labeled == 1
-    assert result.num_unlabeled == 1
-
-    assert (
-        result.labeled_samples[0].track_id
-        == 1
-    )
-
-    assert (
-        result.unlabeled_samples[0].track_id
-        == 2
-    )
-
-
-def test_video_id_prevents_wrong_alignment() -> None:
-
-    samples = [
-        make_graph_sample(
-            "sample_001",
-            10,
-            video_id="video_001",
-        ),
-        make_graph_sample(
-            "sample_002",
-            10,
-            video_id="video_002",
-        ),
-    ]
-
-    annotations = AnnotationSet(
-        annotations=[
-            make_annotation(
-                "ann_001",
-                10,
-                10,
-                "feeding",
-                video_id="video_001",
-            ),
-        ]
-    )
-
-    aligner = AnnotationGraphAligner()
-
-    result = aligner.align(
-        samples,
-        annotations,
-    )
-
-    assert result.num_labeled == 1
-    assert result.num_unlabeled == 1
-
-    assert (
-        result.labeled_samples[0].video_id
-        == "video_001"
-    )
-
-
-def test_conflicting_annotations_are_detected() -> None:
-
-    samples = [
-        make_graph_sample(
-            "sample_001",
-            10,
-        ),
-    ]
-
-    annotations = AnnotationSet(
-        annotations=[
-            make_annotation(
-                "ann_001",
-                10,
-                10,
-                "feeding",
-            ),
-            make_annotation(
-                "ann_002",
-                10,
-                10,
-                "walking",
-            ),
-        ]
-    )
-
-    aligner = AnnotationGraphAligner(
-        strict_conflicts=False,
-    )
-
-    result = aligner.align(
-        samples,
-        annotations,
-    )
-
-    assert result.num_labeled == 0
-    assert result.num_unlabeled == 0
-    assert result.num_conflicts == 1
-
-    conflict = result.conflicts[0]
-
-    assert conflict.sample_id == (
-        "sample_001"
-    )
-
-    assert conflict.behavior_ids == (
-        "feeding",
-        "walking",
-    )
-
-
-def test_strict_conflicts_raise_error() -> None:
-
-    samples = [
-        make_graph_sample(
-            "sample_001",
-            10,
-        ),
-    ]
-
-    annotations = AnnotationSet(
-        annotations=[
-            make_annotation(
-                "ann_001",
-                10,
-                10,
-                "feeding",
-            ),
-            make_annotation(
-                "ann_002",
-                10,
-                10,
-                "walking",
-            ),
-        ]
-    )
-
-    aligner = AnnotationGraphAligner(
-        strict_conflicts=True,
-    )
-
-    with pytest.raises(ValueError):
-        aligner.align(
-            samples,
-            annotations,
+        self.strict_conflicts = (
+            strict_conflicts
         )
 
-
-def test_require_full_coverage() -> None:
-
-    samples = [
-        make_graph_sample(
-            "sample_001",
-            10,
-        ),
-        make_graph_sample(
-            "sample_002",
-            20,
-        ),
-    ]
-
-    annotations = AnnotationSet(
-        annotations=[
-            make_annotation(
-                "ann_001",
-                10,
-                10,
-                "feeding",
-            ),
-        ]
-    )
-
-    aligner = AnnotationGraphAligner(
-        require_full_coverage=True,
-    )
-
-    with pytest.raises(ValueError):
-        aligner.align(
-            samples,
-            annotations,
+        self.require_full_coverage = (
+            require_full_coverage
         )
 
+    def align(
+        self,
+        graph_samples: Sequence[GraphSample],
+        annotations: AnnotationSet,
+    ) -> AlignmentResult:
 
-def test_build_label_mapping() -> None:
+        if not graph_samples:
+            raise ValueError(
+                "graph_samples cannot be empty."
+            )
 
-    samples = [
-        make_graph_sample(
-            "sample_001",
-            10,
-        ),
-        make_graph_sample(
-            "sample_002",
-            11,
-        ),
-    ]
+        annotations.validate()
 
-    samples[0] = GraphSample(
-        graph=samples[0].graph,
-        label=0,
-        behavior_id="walking",
-        sample_id=samples[0].sample_id,
-        metadata=samples[0].metadata,
-    )
-
-    samples[1] = GraphSample(
-        graph=samples[1].graph,
-        label=0,
-        behavior_id="feeding",
-        sample_id=samples[1].sample_id,
-        metadata=samples[1].metadata,
-    )
-
-    mapping = (
-        AnnotationGraphAligner.build_label_mapping(
-            samples
+        annotation_index = (
+            self._build_annotation_index(
+                annotations
+            )
         )
-    )
 
-    assert mapping == {
-        "feeding": 0,
-        "walking": 1,
-    }
+        labeled_samples: list[
+            GraphSample
+        ] = []
 
+        unlabeled_samples: list[
+            GraphSample
+        ] = []
 
-def test_apply_label_mapping() -> None:
+        conflicts: list[
+            AlignmentConflict
+        ] = []
 
-    samples = [
-        make_graph_sample(
-            "sample_001",
-            10,
-        ),
-        make_graph_sample(
-            "sample_002",
-            11,
-        ),
-    ]
+        for graph_sample in graph_samples:
 
-    samples[0] = GraphSample(
-        graph=samples[0].graph,
-        label=0,
-        behavior_id="feeding",
-        sample_id=samples[0].sample_id,
-        metadata=samples[0].metadata,
-    )
+            graph_sample.validate()
 
-    samples[1] = GraphSample(
-        graph=samples[1].graph,
-        label=0,
-        behavior_id="walking",
-        sample_id=samples[1].sample_id,
-        metadata=samples[1].metadata,
-    )
+            (
+                video_id,
+                track_id,
+                start_frame,
+                end_frame,
+            ) = self._extract_graph_identity(
+                graph_sample
+            )
 
-    mapping = {
-        "feeding": 3,
-        "walking": 7,
-    }
+            matched_annotations = (
+                self._find_overlapping_annotations(
+                    annotation_index=annotation_index,
+                    video_id=video_id,
+                    track_id=track_id,
+                    start_frame=start_frame,
+                    end_frame=end_frame,
+                )
+            )
 
-    labeled = (
-        AnnotationGraphAligner.apply_label_mapping(
-            samples,
-            mapping,
+            if not matched_annotations:
+
+                if self.require_full_coverage:
+                    raise ValueError(
+                        "GraphSample has no matching annotation: "
+                        f"{graph_sample.sample_id}"
+                    )
+
+                unlabeled_samples.append(
+                    graph_sample
+                )
+
+                continue
+
+            behavior_ids = tuple(
+                sorted(
+                    {
+                        annotation.behavior_id
+                        for annotation
+                        in matched_annotations
+                    }
+                )
+            )
+
+            if len(behavior_ids) > 1:
+
+                conflict = (
+                    AlignmentConflict(
+                        sample_id=graph_sample.sample_id,
+                        video_id=video_id,
+                        track_id=track_id,
+                        frame=start_frame,
+                        behavior_ids=behavior_ids,
+                    )
+                )
+
+                conflicts.append(
+                    conflict
+                )
+
+                if self.strict_conflicts:
+                    raise ValueError(
+                        self._format_conflict_message(
+                            conflict
+                        )
+                    )
+
+                continue
+
+            annotation = (
+                matched_annotations[0]
+            )
+
+            labeled_sample = (
+                self._apply_annotation(
+                    graph_sample,
+                    annotation,
+                )
+            )
+
+            labeled_samples.append(
+                labeled_sample
+            )
+
+        result = AlignmentResult(
+            labeled_samples=labeled_samples,
+            unlabeled_samples=unlabeled_samples,
+            conflicts=conflicts,
         )
-    )
 
-    assert labeled[0].label == 3
-    assert labeled[1].label == 7
+        result.validate()
 
-    assert (
-        labeled[0].behavior_id
-        == "feeding"
-    )
+        return result
 
-    assert (
-        labeled[1].behavior_id
-        == "walking"
-    )
+    @staticmethod
+    def apply_label_mapping(
+        samples: Sequence[GraphSample],
+        label_to_index: dict[str, int],
+    ) -> list[GraphSample]:
+        """
+        Apply a canonical behavior-to-index mapping to graph samples.
 
+        The mapping should normally be created once from the training
+        split and then reused for validation and test data.
+        """
 
-def test_apply_label_mapping_rejects_unknown_behavior() -> None:
+        if not label_to_index:
+            raise ValueError(
+                "label_to_index cannot be empty."
+            )
 
-    sample = make_graph_sample(
-        "sample_001",
-        10,
-    )
+        values = list(
+            label_to_index.values()
+        )
 
-    sample = GraphSample(
-        graph=sample.graph,
-        label=0,
-        behavior_id="drinking",
-        sample_id=sample.sample_id,
-        metadata=sample.metadata,
-    )
+        if len(values) != len(
+            set(values)
+        ):
+            raise ValueError(
+                "label_to_index values must be unique."
+            )
 
-    with pytest.raises(ValueError):
-        AnnotationGraphAligner.apply_label_mapping(
-            [sample],
+        if any(
+            not isinstance(
+                value,
+                int,
+            )
+            for value in values
+        ):
+            raise TypeError(
+                "label_to_index values must be integers."
+            )
+
+        if any(
+            value < 0
+            for value in values
+        ):
+            raise ValueError(
+                "label_to_index values cannot be negative."
+            )
+
+        result: list[
+            GraphSample
+        ] = []
+
+        for sample in samples:
+
+            sample.validate()
+
+            behavior_id = (
+                sample.behavior_id
+            )
+
+            if behavior_id not in (
+                label_to_index
+            ):
+                raise ValueError(
+                    "Behavior "
+                    f"'{behavior_id}' "
+                    "is missing from label_to_index."
+                )
+
+            labeled_sample = (
+                GraphSample(
+                    graph=sample.graph,
+                    label=int(
+                        label_to_index[
+                            behavior_id
+                        ]
+                    ),
+                    behavior_id=behavior_id,
+                    sample_id=sample.sample_id,
+                    metadata=dict(
+                        sample.metadata or {}
+                    ),
+                )
+            )
+
+            labeled_sample.validate()
+
+            result.append(
+                labeled_sample
+            )
+
+        return result
+
+    @staticmethod
+    def build_label_mapping(
+        samples: Sequence[GraphSample],
+    ) -> dict[str, int]:
+        """
+        Build a deterministic behavior-to-index mapping.
+
+        The mapping is sorted alphabetically by behavior_id.
+        """
+
+        behavior_ids = sorted(
             {
-                "feeding": 0,
-                "walking": 1,
-            },
+                sample.behavior_id
+                for sample in samples
+            }
+        )
+
+        if not behavior_ids:
+            raise ValueError(
+                "Cannot build label mapping from empty samples."
+            )
+
+        return {
+            behavior_id: index
+            for index, behavior_id
+            in enumerate(behavior_ids)
+        }
+
+    @staticmethod
+    def _build_annotation_index(
+        annotations: AnnotationSet,
+    ) -> dict[
+        tuple[str, int],
+        list[BehaviorAnnotation],
+    ]:
+
+        index: dict[
+            tuple[str, int],
+            list[BehaviorAnnotation],
+        ] = {}
+
+        for annotation in annotations:
+
+            key = (
+                annotation.video_id,
+                annotation.track_id,
+            )
+
+            index.setdefault(
+                key,
+                [],
+            ).append(
+                annotation
+            )
+
+        for values in index.values():
+
+            values.sort(
+                key=lambda annotation: (
+                    annotation.start_frame,
+                    annotation.end_frame,
+                    annotation.annotation_id,
+                )
+            )
+
+        return index
+
+    @staticmethod
+    def _extract_graph_identity(
+        graph_sample: GraphSample,
+    ) -> tuple[str, int, int, int]:
+
+        video_id = graph_sample.get_metadata(
+            "video_id"
+        )
+
+        track_id = graph_sample.get_metadata(
+            "track_id"
+        )
+
+        start_frame = graph_sample.get_metadata(
+            "start_frame"
+        )
+
+        end_frame = graph_sample.get_metadata(
+            "end_frame"
+        )
+
+        if video_id is None:
+            raise ValueError(
+                "GraphSample is missing metadata.video_id: "
+                f"{graph_sample.sample_id}"
+            )
+
+        if track_id is None:
+            raise ValueError(
+                "GraphSample is missing metadata.track_id: "
+                f"{graph_sample.sample_id}"
+            )
+
+        if start_frame is None:
+            raise ValueError(
+                "GraphSample is missing metadata.start_frame: "
+                f"{graph_sample.sample_id}"
+            )
+
+        if end_frame is None:
+            raise ValueError(
+                "GraphSample is missing metadata.end_frame: "
+                f"{graph_sample.sample_id}"
+            )
+
+        video_id = str(
+            video_id
+        )
+
+        track_id = int(
+            track_id
+        )
+
+        start_frame = int(
+            start_frame
+        )
+
+        end_frame = int(
+            end_frame
+        )
+
+        if track_id < 0:
+            raise ValueError(
+                "track_id cannot be negative."
+            )
+
+        if start_frame < 0:
+            raise ValueError(
+                "start_frame cannot be negative."
+            )
+
+        if end_frame < start_frame:
+            raise ValueError(
+                "end_frame must be >= start_frame: "
+                f"{graph_sample.sample_id}"
+            )
+
+        return (
+            video_id,
+            track_id,
+            start_frame,
+            end_frame,
+        )
+
+    @staticmethod
+    def _find_overlapping_annotations(
+        *,
+        annotation_index: dict[
+            tuple[str, int],
+            list[BehaviorAnnotation],
+        ],
+        video_id: str,
+        track_id: int,
+        start_frame: int,
+        end_frame: int,
+    ) -> list[BehaviorAnnotation]:
+
+        candidates = annotation_index.get(
+            (
+                video_id,
+                track_id,
+            ),
+            [],
+        )
+
+        matched: list[
+            BehaviorAnnotation
+        ] = []
+
+        for annotation in candidates:
+
+            overlaps = (
+                annotation.start_frame
+                <= end_frame
+                and annotation.end_frame
+                >= start_frame
+            )
+
+            if overlaps:
+                matched.append(
+                    annotation
+                )
+
+        return matched
+
+    @staticmethod
+    def _apply_annotation(
+        graph_sample: GraphSample,
+        annotation: BehaviorAnnotation,
+    ) -> GraphSample:
+
+        metadata = dict(
+            graph_sample.metadata or {}
+        )
+
+        metadata.update(
+            {
+                "annotation_id": (
+                    annotation.annotation_id
+                ),
+                "annotator": (
+                    annotation.annotator
+                ),
+                "annotation_confidence": (
+                    annotation.confidence
+                ),
+            }
+        )
+
+        return GraphSample(
+            graph=graph_sample.graph,
+            label=graph_sample.label,
+            behavior_id=annotation.behavior_id,
+            sample_id=graph_sample.sample_id,
+            metadata=metadata,
+        )
+
+    @staticmethod
+    def _format_conflict_message(
+        conflict: AlignmentConflict,
+    ) -> str:
+
+        behaviors = ", ".join(
+            conflict.behavior_ids
+        )
+
+        return (
+            "Conflicting annotations found for "
+            f"sample '{conflict.sample_id}' "
+            f"(video_id='{conflict.video_id}', "
+            f"track_id={conflict.track_id}, "
+            f"frame={conflict.frame}): "
+            f"{behaviors}"
         )
