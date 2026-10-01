@@ -16,24 +16,33 @@ class TemporalPyGDataset:
     Convert TemporalGraphSample objects into PyTorch-compatible
     temporal graph Data objects.
 
-    Output tensor shapes:
+    Tensor contract
+    ---------------
+    x:
+        [T, N, F_node]
 
-        x:
-            [T, N, F_node]
+    edge_index:
+        [2, E]
 
-        edge_index:
-            [2, E]
+    edge_attr:
+        [T, E, F_edge] or absent
 
-        edge_attr:
-            [T, E, F_edge]
+    y:
+        [1]
 
-        y:
-            [1]
+    Label mapping
+    -------------
+    If `label_to_index` is not provided, the mapping is inferred
+    from the dataset.
+
+    For validation and test datasets, always pass the mapping
+    learned from the training dataset.
     """
 
     def __init__(
         self,
         samples: Sequence[TemporalGraphSample],
+        label_to_index: dict[str, int] | None = None,
     ) -> None:
 
         self.samples = list(
@@ -42,14 +51,22 @@ class TemporalPyGDataset:
 
         self._validate()
 
-        self.label_to_index = (
-            self._build_label_mapping()
-        )
+        if label_to_index is None:
+            self.label_to_index = (
+                self._build_label_mapping()
+            )
+        else:
+            self.label_to_index = dict(
+                label_to_index
+            )
+
+            self._validate_label_mapping()
 
     def _validate(self) -> None:
         sample_ids: set[str] = set()
 
         for sample in self.samples:
+
             if not isinstance(
                 sample,
                 TemporalGraphSample,
@@ -80,6 +97,7 @@ class TemporalPyGDataset:
         for sample in self.samples:
 
             if sample.behavior_id in mapping:
+
                 expected = mapping[
                     sample.behavior_id
                 ]
@@ -103,6 +121,67 @@ class TemporalPyGDataset:
                 key=lambda item: item[1],
             )
         )
+
+    def _validate_label_mapping(
+        self,
+    ) -> None:
+
+        if not self.label_to_index:
+            raise ValueError(
+                "label_to_index cannot be empty."
+            )
+
+        label_values = list(
+            self.label_to_index.values()
+        )
+
+        if len(label_values) != len(
+            set(label_values)
+        ):
+            raise ValueError(
+                "label_to_index values must be unique."
+            )
+
+        if any(
+            not isinstance(value, int)
+            for value in label_values
+        ):
+            raise TypeError(
+                "label_to_index values must be integers."
+            )
+
+        if any(
+            value < 0
+            for value in label_values
+        ):
+            raise ValueError(
+                "label_to_index values cannot be negative."
+            )
+
+        for sample in self.samples:
+
+            if sample.behavior_id not in (
+                self.label_to_index
+            ):
+                raise ValueError(
+                    "Behavior "
+                    f"'{sample.behavior_id}' "
+                    "is missing from label_to_index."
+                )
+
+            expected_label = (
+                self.label_to_index[
+                    sample.behavior_id
+                ]
+            )
+
+            if expected_label != sample.label:
+                raise ValueError(
+                    "Inconsistent label mapping for "
+                    f"behavior '{sample.behavior_id}': "
+                    f"expected {expected_label}, "
+                    f"found {sample.label}."
+                )
 
     def __len__(self) -> int:
         return len(
@@ -138,17 +217,23 @@ class TemporalPyGDataset:
             else None
         )
 
-        node_features: list[torch.Tensor] = []
-        edge_features: list[torch.Tensor] = []
-
         has_edge_features = (
             first_graph.edge_features
             is not None
         )
 
-        for time_index, graph_sample in enumerate(
-            graphs
-        ):
+        node_features: list[
+            torch.Tensor
+        ] = []
+
+        edge_features: list[
+            torch.Tensor
+        ] = []
+
+        for (
+            time_index,
+            graph_sample,
+        ) in enumerate(graphs):
 
             graph = graph_sample.graph
 
@@ -162,15 +247,23 @@ class TemporalPyGDataset:
                     f"Mismatch at time index {time_index}."
                 )
 
-            if not torch.equal(
+            current_edge_index = (
                 torch.as_tensor(
                     graph.edge_index,
                     dtype=torch.long,
-                ),
+                )
+            )
+
+            reference_edge_index_tensor = (
                 torch.as_tensor(
                     reference_edge_index,
                     dtype=torch.long,
-                ),
+                )
+            )
+
+            if not torch.equal(
+                current_edge_index,
+                reference_edge_index_tensor,
             ):
                 raise ValueError(
                     "All graphs in a temporal sample must have "
@@ -192,6 +285,7 @@ class TemporalPyGDataset:
                 )
 
             if has_edge_features:
+
                 if (
                     graph.edge_features.shape
                     != reference_edge_shape
@@ -236,9 +330,12 @@ class TemporalPyGDataset:
         )
 
         if has_edge_features:
-            data.edge_attr = torch.stack(
-                edge_features,
-                dim=0,
+
+            data.edge_attr = (
+                torch.stack(
+                    edge_features,
+                    dim=0,
+                )
             )
 
         data.sample_id = (
