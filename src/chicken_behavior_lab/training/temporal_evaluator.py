@@ -12,7 +12,9 @@ from sklearn.metrics import (
     recall_score,
 )
 
-from chicken_behavior_lab.dataset.temporal_batch import TemporalBatch
+from chicken_behavior_lab.dataset.temporal_batch import (
+    TemporalBatch,
+)
 
 
 @dataclass(slots=True)
@@ -35,36 +37,67 @@ class TemporalEvaluationResult:
     sample_ids: list[str]
     video_ids: list[str]
     track_ids: list[int]
-    prediction_records: list[TemporalPredictionRecord]
+    prediction_records: list[
+        TemporalPredictionRecord
+    ]
 
 
 class TemporalEvaluator:
-    """
-    Evaluate TemporalBehaviorGNN models.
-
-    The evaluator expects a TemporalBatch and a model that returns:
-
-        logits: [B, num_classes]
-
-    Metadata from TemporalBatch is preserved so that predictions can later
-    be connected back to videos, tracks, and temporal windows.
-    """
 
     def __init__(
         self,
-        model: torch.nn.Module,
+        model,
         device: torch.device | str,
         index_to_label: dict[int, str] | None = None,
+        label_to_index: dict[str, int] | None = None,
     ) -> None:
+
         self.model = model
         self.device = torch.device(device)
-        self.index_to_label = index_to_label or {}
+
+        if (
+            index_to_label is not None
+            and label_to_index is not None
+        ):
+            generated = {
+                index: label
+                for label, index
+                in label_to_index.items()
+            }
+
+            if generated != index_to_label:
+                raise ValueError(
+                    "index_to_label and label_to_index "
+                    "describe different mappings."
+                )
+
+        if label_to_index is not None:
+            self.label_to_index = dict(
+                label_to_index
+            )
+            self.index_to_label = {
+                index: label
+                for label, index
+                in label_to_index.items()
+            }
+
+        else:
+            self.index_to_label = dict(
+                index_to_label or {}
+            )
+
+            self.label_to_index = {
+                label: index
+                for index, label
+                in self.index_to_label.items()
+            }
 
     @torch.no_grad()
     def evaluate(
         self,
         data_loader,
     ) -> TemporalEvaluationResult:
+
         self.model.eval()
 
         y_true: list[int] = []
@@ -74,24 +107,36 @@ class TemporalEvaluator:
         video_ids: list[str] = []
         track_ids: list[int] = []
 
-        prediction_records: list[TemporalPredictionRecord] = []
+        prediction_records: list[
+            TemporalPredictionRecord
+        ] = []
 
         for batch in data_loader:
-            if not isinstance(batch, TemporalBatch):
+
+            if not isinstance(
+                batch,
+                TemporalBatch,
+            ):
                 raise TypeError(
-                    "TemporalEvaluator expects batches of type TemporalBatch."
+                    "TemporalEvaluator expects "
+                    "TemporalBatch instances."
                 )
 
-            batch = batch.to(self.device)
+            batch = batch.to(
+                self.device
+            )
 
             logits = self.model(batch)
 
             if logits.ndim != 2:
                 raise ValueError(
-                    "Model output must have shape [B, num_classes]."
+                    "Model output must have shape [B, C]."
                 )
 
-            probabilities = torch.softmax(logits, dim=-1)
+            probabilities = torch.softmax(
+                logits,
+                dim=-1,
+            )
 
             predictions = torch.argmax(
                 probabilities,
@@ -103,46 +148,80 @@ class TemporalEvaluator:
                 dim=-1,
             ).values
 
-            batch_true = batch.y.detach().cpu().tolist()
-            batch_pred = predictions.detach().cpu().tolist()
-            batch_confidence = confidence.detach().cpu().tolist()
+            true_values = batch.y.long()
 
-            y_true.extend(int(value) for value in batch_true)
-            y_pred.extend(int(value) for value in batch_pred)
+            for index in range(
+                batch.batch_size
+            ):
 
-            sample_ids.extend(batch.sample_id)
-            video_ids.extend(batch.video_id)
+                true_index = int(
+                    true_values[index].item()
+                )
 
-            track_ids.extend(
-                int(value)
-                for value in batch.track_id.detach().cpu().tolist()
-            )
+                predicted_index = int(
+                    predictions[index].item()
+                )
 
-            for index in range(batch.batch_size):
+                sample_id = batch.sample_id[
+                    index
+                ]
+
+                video_id = batch.video_id[
+                    index
+                ]
+
+                track_id = int(
+                    batch.track_id[index].item()
+                )
+
+                start_frame = int(
+                    batch.start_frame[index].item()
+                )
+
+                end_frame = int(
+                    batch.end_frame[index].item()
+                )
+
+                conf = float(
+                    confidence[index].item()
+                )
+
+                y_true.append(
+                    true_index
+                )
+
+                y_pred.append(
+                    predicted_index
+                )
+
+                sample_ids.append(
+                    sample_id
+                )
+
+                video_ids.append(
+                    video_id
+                )
+
+                track_ids.append(
+                    track_id
+                )
+
                 prediction_records.append(
                     TemporalPredictionRecord(
-                        sample_id=batch.sample_id[index],
-                        video_id=batch.video_id[index],
-                        track_id=int(
-                            batch.track_id[index].item()
-                        ),
-                        start_frame=int(
-                            batch.start_frame[index].item()
-                        ),
-                        end_frame=int(
-                            batch.end_frame[index].item()
-                        ),
-                        true_index=int(batch_true[index]),
-                        predicted_index=int(batch_pred[index]),
-                        confidence=float(
-                            batch_confidence[index]
-                        ),
+                        sample_id=sample_id,
+                        video_id=video_id,
+                        track_id=track_id,
+                        start_frame=start_frame,
+                        end_frame=end_frame,
+                        true_index=true_index,
+                        predicted_index=predicted_index,
+                        confidence=conf,
                     )
                 )
 
         metrics = self._compute_metrics(
-            y_true=y_true,
-            y_pred=y_pred,
+            y_true,
+            y_pred,
         )
 
         return TemporalEvaluationResult(
@@ -160,6 +239,7 @@ class TemporalEvaluator:
         y_true: list[int],
         y_pred: list[int],
     ) -> dict[str, Any]:
+
         if not y_true:
             raise ValueError(
                 "Cannot evaluate an empty temporal dataset."
@@ -171,12 +251,16 @@ class TemporalEvaluator:
 
         metrics: dict[str, Any] = {
             "accuracy": float(
-                accuracy_score(y_true, y_pred)
+                accuracy_score(
+                    y_true,
+                    y_pred,
+                )
             ),
             "macro_precision": float(
                 precision_score(
                     y_true,
                     y_pred,
+                    labels=labels,
                     average="macro",
                     zero_division=0,
                 )
@@ -185,6 +269,7 @@ class TemporalEvaluator:
                 recall_score(
                     y_true,
                     y_pred,
+                    labels=labels,
                     average="macro",
                     zero_division=0,
                 )
@@ -193,6 +278,7 @@ class TemporalEvaluator:
                 f1_score(
                     y_true,
                     y_pred,
+                    labels=labels,
                     average="macro",
                     zero_division=0,
                 )
@@ -201,6 +287,7 @@ class TemporalEvaluator:
                 f1_score(
                     y_true,
                     y_pred,
+                    labels=labels,
                     average="weighted",
                     zero_division=0,
                 )
