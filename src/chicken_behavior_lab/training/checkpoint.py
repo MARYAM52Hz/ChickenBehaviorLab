@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any
 
 import torch
-
-from chicken_behavior_lab.config.model_config import ModelConfig
 
 
 CHECKPOINT_FORMAT_VERSION = 1
@@ -14,78 +12,75 @@ CHECKPOINT_FORMAT_VERSION = 1
 
 class CheckpointManager:
     """
-    Save and load model training checkpoints.
+    Save and load complete training checkpoints.
 
-    A checkpoint stores:
-        - checkpoint format version
-        - epoch
-        - model type
-        - model configuration
-        - label mapping
+    The checkpoint contains:
         - model state
         - optimizer state
         - scheduler state
-        - best validation metric
-        - training metrics
-        - validation metrics
-        - additional metadata
+        - epoch
+        - model configuration
+        - label mapping
+        - training/validation metrics
+        - arbitrary metadata
     """
-
-    REQUIRED_KEYS = {
-        "format_version",
-        "epoch",
-        "model_type",
-        "model_config",
-        "label_mapping",
-        "model_state_dict",
-        "best_metric",
-        "train_metrics",
-        "val_metrics",
-        "metadata",
-    }
 
     def __init__(
         self,
-        directory: str | Path = "checkpoints",
+        directory: str | Path,
+        filename: str = "checkpoint.pt",
     ) -> None:
         self.directory = Path(directory)
-        self.directory.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
+        self.filename = filename
+
+        if not self.filename.endswith(".pt"):
+            raise ValueError("Checkpoint filename must end with '.pt'.")
+
+        self.directory.mkdir(parents=True, exist_ok=True)
+
+    @property
+    def path(self) -> Path:
+        return self.directory / self.filename
 
     def save(
         self,
         *,
-        filename: str,
         model: torch.nn.Module,
-        optimizer: torch.optim.Optimizer | None,
-        scheduler: Any | None,
         epoch: int,
-        model_config: ModelConfig,
+        model_config: Any | None = None,
+        optimizer: torch.optim.Optimizer | None = None,
+        scheduler: Any | None = None,
         label_mapping: dict[str, int] | None = None,
         best_metric: float | None = None,
-        train_metrics: dict[str, float] | None = None,
-        val_metrics: dict[str, float] | None = None,
+        train_metrics: dict[str, Any] | None = None,
+        val_metrics: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
+        path: str | Path | None = None,
     ) -> Path:
         if epoch < 0:
             raise ValueError("epoch must be >= 0.")
 
-        if not filename:
-            raise ValueError("filename cannot be empty.")
+        checkpoint_path = (
+            Path(path)
+            if path is not None
+            else self.path
+        )
 
-        if not isinstance(model_config, ModelConfig):
-            raise TypeError(
-                "model_config must be an instance of ModelConfig."
-            )
+        checkpoint_path.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
 
         checkpoint = {
             "format_version": CHECKPOINT_FORMAT_VERSION,
             "epoch": int(epoch),
-            "model_type": model_config.model_type,
-            "model_config": asdict(model_config),
-            "label_mapping": dict(label_mapping or {}),
+            "model_type": self._infer_model_type(model),
+            "model_config": self._serialize_config(model_config),
+            "label_mapping": (
+                dict(label_mapping)
+                if label_mapping is not None
+                else None
+            ),
             "model_state_dict": model.state_dict(),
             "optimizer_state_dict": (
                 optimizer.state_dict()
@@ -107,37 +102,29 @@ class CheckpointManager:
             "metadata": dict(metadata or {}),
         }
 
-        path = self.directory / filename
-        path.parent.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
+        torch.save(checkpoint, checkpoint_path)
 
-        torch.save(
-            checkpoint,
-            path,
-        )
-
-        return path
+        return checkpoint_path
 
     def load(
         self,
-        filename: str | Path,
+        path: str | Path | None = None,
         *,
         map_location: str | torch.device = "cpu",
     ) -> dict[str, Any]:
-        path = Path(filename)
+        checkpoint_path = (
+            Path(path)
+            if path is not None
+            else self.path
+        )
 
-        if not path.is_absolute():
-            path = self.directory / path
-
-        if not path.exists():
+        if not checkpoint_path.exists():
             raise FileNotFoundError(
-                f"Checkpoint not found: {path}"
+                f"Checkpoint not found: {checkpoint_path}"
             )
 
         checkpoint = torch.load(
-            path,
+            checkpoint_path,
             map_location=map_location,
         )
 
@@ -150,67 +137,120 @@ class CheckpointManager:
 
         return checkpoint
 
-    @classmethod
+    def restore(
+        self,
+        checkpoint: dict[str, Any],
+        *,
+        model: torch.nn.Module,
+        optimizer: torch.optim.Optimizer | None = None,
+        scheduler: Any | None = None,
+        strict: bool = True,
+    ) -> int:
+        self._validate_checkpoint(checkpoint)
+
+        model.load_state_dict(
+            checkpoint["model_state_dict"],
+            strict=strict,
+        )
+
+        optimizer_state = checkpoint.get(
+            "optimizer_state_dict"
+        )
+
+        if (
+            optimizer is not None
+            and optimizer_state is not None
+        ):
+            optimizer.load_state_dict(
+                optimizer_state
+            )
+
+        scheduler_state = checkpoint.get(
+            "scheduler_state_dict"
+        )
+
+        if (
+            scheduler is not None
+            and scheduler_state is not None
+        ):
+            scheduler.load_state_dict(
+                scheduler_state
+            )
+
+        return int(checkpoint["epoch"])
+
+    @staticmethod
+    def _serialize_config(config: Any | None) -> Any:
+        if config is None:
+            return None
+
+        if is_dataclass(config):
+            return asdict(config)
+
+        if isinstance(config, dict):
+            return dict(config)
+
+        if hasattr(config, "to_dict"):
+            return dict(config.to_dict())
+
+        raise TypeError(
+            "model_config must be a dataclass, dictionary, "
+            "or provide a to_dict() method."
+        )
+
+    @staticmethod
+    def _infer_model_type(
+        model: torch.nn.Module,
+    ) -> str | None:
+        if hasattr(model, "model_type"):
+            return str(model.model_type)
+
+        class_name = model.__class__.__name__
+
+        if class_name == "TemporalBehaviorGNN":
+            return "temporal"
+
+        if class_name == "ChickenBehaviorGNN":
+            return "baseline"
+
+        return None
+
+    @staticmethod
     def _validate_checkpoint(
-        cls,
         checkpoint: dict[str, Any],
     ) -> None:
-        missing_keys = cls.REQUIRED_KEYS.difference(
+        required_keys = {
+            "format_version",
+            "epoch",
+            "model_state_dict",
+        }
+
+        missing = required_keys.difference(
             checkpoint.keys()
         )
 
-        if missing_keys:
+        if missing:
             raise ValueError(
-                "Checkpoint is missing required keys: "
-                + ", ".join(sorted(missing_keys))
+                "Checkpoint is missing required fields: "
+                f"{sorted(missing)}"
             )
 
-        if checkpoint["format_version"] != CHECKPOINT_FORMAT_VERSION:
+        version = checkpoint["format_version"]
+
+        if version != CHECKPOINT_FORMAT_VERSION:
             raise ValueError(
                 "Unsupported checkpoint format version: "
-                f"{checkpoint['format_version']}"
+                f"{version}. Expected "
+                f"{CHECKPOINT_FORMAT_VERSION}."
             )
 
         if not isinstance(
-            checkpoint["model_config"],
-            dict,
+            checkpoint["epoch"],
+            int,
         ):
             raise TypeError(
-                "checkpoint['model_config'] must be a dictionary."
+                "Checkpoint epoch must be an integer."
             )
-
-        if not isinstance(
-            checkpoint["label_mapping"],
-            dict,
-        ):
-            raise TypeError(
-                "checkpoint['label_mapping'] must be a dictionary."
-            )
-
-        if not isinstance(
-            checkpoint["model_state_dict"],
-            dict,
-        ):
-            raise TypeError(
-                "checkpoint['model_state_dict'] must be a dictionary."
-            )
-
-    @staticmethod
-    def build_model_config(
-        checkpoint: dict[str, Any],
-    ) -> ModelConfig:
-        if "model_config" not in checkpoint:
-            raise ValueError(
-                "Checkpoint does not contain model_config."
-            )
-
-        config_dict = dict(
-            checkpoint["model_config"]
-        )
-
-        return ModelConfig(
-            **config_dict
-        )
 
 
 def load_checkpoint(
@@ -221,14 +261,11 @@ def load_checkpoint(
     """
     Backward-compatible convenience function.
     """
-
-    path = Path(path)
-
     manager = CheckpointManager(
-        path.parent
+        directory=Path(path).parent,
+        filename=Path(path).name,
     )
 
     return manager.load(
-        path.name,
         map_location=map_location,
     )
