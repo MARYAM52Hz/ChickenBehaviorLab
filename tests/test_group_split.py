@@ -1,176 +1,213 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import numpy as np
 
 from chicken_behavior_lab.dataset.group_split import (
-    split_group_ids,
+    GroupAwareSplitter,
+)
+from chicken_behavior_lab.dataset.sample import (
+    GraphSample,
 )
 
-from chicken_behavior_lab.dataset.group_splitter import (
-    split_dataset_by_group,
-)
+
+class DummyGraph:
+
+    def __init__(self) -> None:
+        self.node_features = np.zeros(
+            (3, 4),
+            dtype=np.float32,
+        )
+
+        self.edge_index = np.array(
+            [
+                [0, 1],
+                [1, 2],
+            ],
+            dtype=np.int64,
+        )
+
+        self.edge_features = None
+
+    def validate(self) -> None:
+        pass
 
 
-@dataclass
-class DummySample:
-    metadata: dict
+def make_sample(
+    sample_id: str,
+    video_id: str,
+    track_id: int,
+) -> GraphSample:
+
+    return GraphSample(
+        graph=DummyGraph(),
+        label=0,
+        behavior_id="feeding",
+        sample_id=sample_id,
+        metadata={
+            "video_id": video_id,
+            "track_id": track_id,
+            "start_frame": 0,
+            "end_frame": 10,
+        },
+    )
 
 
-class DummyDataset:
-    def __init__(
-        self,
-        samples,
-    ):
-        self.samples = samples
+def test_group_split_has_no_video_overlap() -> None:
 
-    def __len__(self):
-        return len(self.samples)
-
-    def __getitem__(
-        self,
-        index,
-    ):
-        return self.samples[index]
-
-
-def make_dataset():
     samples = []
 
-    for video_id in [
-        "video_001",
-        "video_002",
-        "video_003",
-        "video_004",
-        "video_005",
-        "video_006",
-        "video_007",
-        "video_008",
-        "video_009",
-        "video_010",
-    ]:
-        for frame in range(3):
+    for video_index in range(10):
+
+        video_id = (
+            f"video_{video_index:03d}"
+        )
+
+        for track_id in range(2):
+
             samples.append(
-                DummySample(
-                    metadata={
-                        "video_id": video_id,
-                        "track_id": 1,
-                        "frame_id": frame,
-                    }
+                make_sample(
+                    sample_id=(
+                        f"{video_id}_"
+                        f"track_{track_id}"
+                    ),
+                    video_id=video_id,
+                    track_id=track_id,
                 )
             )
 
-    return DummyDataset(
-        samples
+    splitter = GroupAwareSplitter(
+        train_ratio=0.7,
+        validation_ratio=0.15,
+        test_ratio=0.15,
+        group_key="video_id",
     )
 
-
-def test_group_ids_do_not_overlap():
-    split = split_group_ids(
-        [
-            "video_001",
-            "video_002",
-            "video_003",
-            "video_004",
-            "video_005",
-            "video_006",
-            "video_007",
-            "video_008",
-            "video_009",
-            "video_010",
-        ],
+    result = splitter.split(
+        samples,
         seed=42,
     )
 
-    train = set(
-        split.train
+    train_groups = set(
+        result.train_groups
     )
 
-    validation = set(
-        split.validation
+    validation_groups = set(
+        result.validation_groups
     )
 
-    test = set(
-        split.test
+    test_groups = set(
+        result.test_groups
     )
 
-    assert not train.intersection(
-        validation
+    assert not (
+        train_groups
+        & validation_groups
     )
 
-    assert not train.intersection(
-        test
+    assert not (
+        train_groups
+        & test_groups
     )
 
-    assert not validation.intersection(
-        test
+    assert not (
+        validation_groups
+        & test_groups
     )
 
 
-def test_dataset_split_has_no_video_leakage():
-    dataset = make_dataset()
+def test_split_is_reproducible() -> None:
 
-    splits = split_dataset_by_group(
-        dataset,
-        group_by="video",
+    samples = [
+        make_sample(
+            sample_id=f"sample_{index}",
+            video_id=f"video_{index}",
+            track_id=0,
+        )
+        for index in range(10)
+    ]
+
+    splitter = GroupAwareSplitter(
+        group_key="video_id"
+    )
+
+    first = splitter.split(
+        samples,
+        seed=123,
+    )
+
+    second = splitter.split(
+        samples,
+        seed=123,
+    )
+
+    assert first.train_groups == (
+        second.train_groups
+    )
+
+    assert first.validation_groups == (
+        second.validation_groups
+    )
+
+    assert first.test_groups == (
+        second.test_groups
+    )
+
+
+def test_track_split_uses_video_and_track() -> None:
+
+    samples = [
+        make_sample(
+            sample_id="a",
+            video_id="video_a",
+            track_id=1,
+        ),
+        make_sample(
+            sample_id="b",
+            video_id="video_a",
+            track_id=2,
+        ),
+        make_sample(
+            sample_id="c",
+            video_id="video_b",
+            track_id=1,
+        ),
+        make_sample(
+            sample_id="d",
+            video_id="video_b",
+            track_id=2,
+        ),
+        make_sample(
+            sample_id="e",
+            video_id="video_c",
+            track_id=1,
+        ),
+        make_sample(
+            sample_id="f",
+            video_id="video_c",
+            track_id=2,
+        ),
+    ]
+
+    splitter = GroupAwareSplitter(
+        train_ratio=0.5,
+        validation_ratio=0.25,
+        test_ratio=0.25,
+        group_key="track_id",
+    )
+
+    result = splitter.split(
+        samples,
         seed=42,
     )
 
-    def get_videos(subset):
-        videos = set()
-
-        for index in range(
-            len(subset)
-        ):
-            sample = subset[index]
-
-            videos.add(
-                sample.metadata[
-                    "video_id"
-                ]
-            )
-
-        return videos
-
-    train_videos = get_videos(
-        splits.train
+    all_groups = (
+        result.train_groups
+        + result.validation_groups
+        + result.test_groups
     )
 
-    validation_videos = get_videos(
-        splits.validation
-    )
+    assert len(all_groups) == 6
 
-    test_videos = get_videos(
-        splits.test
-    )
-
-    assert not train_videos.intersection(
-        validation_videos
-    )
-
-    assert not train_videos.intersection(
-        test_videos
-    )
-
-    assert not validation_videos.intersection(
-        test_videos
-    )
-
-
-def test_all_samples_are_preserved():
-    dataset = make_dataset()
-
-    splits = split_dataset_by_group(
-        dataset,
-        group_by="video",
-        seed=42,
-    )
-
-    total_split_samples = (
-        len(splits.train)
-        + len(splits.validation)
-        + len(splits.test)
-    )
-
-    assert total_split_samples == len(
-        dataset
+    assert len(all_groups) == len(
+        set(all_groups)
     )
