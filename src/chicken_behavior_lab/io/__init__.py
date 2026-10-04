@@ -11,9 +11,14 @@ from chicken_behavior_lab.io.experiment_io import (
     ExperimentOutputWriter,
 )
 
+from chicken_behavior_lab.io.evaluation_io import (
+    save_temporal_evaluation,
+)
+
 __all__ = [
     "load_annotations",
     "GraphJsonLoader",
     "load_graph_samples",
     "ExperimentOutputWriter",
+    "save_temporal_evaluation",
 ]
