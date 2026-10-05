@@ -571,4 +571,16 @@ class TemporalExperiment:
             checkpoint_path=(
                 checkpoint_path
             ),
+            class TemporalExperiment:
+
+    def __init__(
+        self,
+        *,
+        model_config,
+        config: TemporalExperimentConfig,
+    ) -> None:
+        config.validate()
+
+        self.model_config = model_config
+        self.config = config
         )
