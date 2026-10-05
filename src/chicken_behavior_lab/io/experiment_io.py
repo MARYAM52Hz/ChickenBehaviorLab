@@ -2,47 +2,38 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, is_dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
-from chicken_behavior_lab.dataset.sample import GraphSample
+import numpy as np
+import torch
 
 
 class ExperimentOutputWriter:
     """
-    Persist reproducible experiment outputs.
-
-    Output structure:
-
-        experiment_dir/
-            experiment_config.json
-            training_history.json
-            test_metrics.json
-            split_manifest.json
-            prediction_errors.json
-            summary.json
+    Manage experiment output directories and JSON artifacts.
     """
 
     def __init__(
         self,
         root_directory: str | Path = "results/experiments",
     ) -> None:
-
         self.root_directory = Path(
             root_directory
         )
 
     def create_experiment_directory(
         self,
-        *,
         timestamp: str | None = None,
     ) -> Path:
+        self.root_directory.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
 
         if timestamp is None:
-            timestamp = datetime.now(
-                timezone.utc
-            ).strftime(
+            timestamp = datetime.now().strftime(
                 "%Y%m%d_%H%M%S"
             )
 
@@ -62,7 +53,6 @@ class ExperimentOutputWriter:
         path: str | Path,
         data: Any,
     ) -> Path:
-
         path = Path(path)
 
         path.parent.mkdir(
@@ -70,13 +60,16 @@ class ExperimentOutputWriter:
             exist_ok=True,
         )
 
+        serializable = self._to_serializable(
+            data
+        )
+
         with path.open(
             "w",
             encoding="utf-8",
         ) as file:
-
             json.dump(
-                self._make_serializable(data),
+                serializable,
                 file,
                 indent=2,
                 ensure_ascii=False,
@@ -89,7 +82,6 @@ class ExperimentOutputWriter:
         experiment_dir: str | Path,
         config: Any,
     ) -> Path:
-
         return self.save_json(
             Path(experiment_dir)
             / "experiment_config.json",
@@ -101,7 +93,6 @@ class ExperimentOutputWriter:
         experiment_dir: str | Path,
         history: dict[str, Any],
     ) -> Path:
-
         return self.save_json(
             Path(experiment_dir)
             / "training_history.json",
@@ -113,7 +104,6 @@ class ExperimentOutputWriter:
         experiment_dir: str | Path,
         metrics: dict[str, Any],
     ) -> Path:
-
         return self.save_json(
             Path(experiment_dir)
             / "test_metrics.json",
@@ -123,13 +113,23 @@ class ExperimentOutputWriter:
     def save_prediction_errors(
         self,
         experiment_dir: str | Path,
-        errors: Any,
+        prediction_errors: Any,
     ) -> Path:
-
         return self.save_json(
             Path(experiment_dir)
             / "prediction_errors.json",
-            errors,
+            prediction_errors,
+        )
+
+    def save_split_manifest(
+        self,
+        experiment_dir: str | Path,
+        manifest: Any,
+    ) -> Path:
+        return self.save_json(
+            Path(experiment_dir)
+            / "split_manifest.json",
+            manifest,
         )
 
     def save_summary(
@@ -137,143 +137,79 @@ class ExperimentOutputWriter:
         experiment_dir: str | Path,
         summary: dict[str, Any],
     ) -> Path:
-
         return self.save_json(
             Path(experiment_dir)
             / "summary.json",
             summary,
         )
 
-    def save_split_manifest(
-        self,
-        experiment_dir: str | Path,
-        *,
-        train_samples: Sequence[GraphSample],
-        validation_samples: Sequence[GraphSample],
-        test_samples: Sequence[GraphSample],
-        group_key: str,
-        train_groups: Sequence[str],
-        validation_groups: Sequence[str],
-        test_groups: Sequence[str],
-    ) -> Path:
-
-        manifest = {
-            "group_key": group_key,
-            "train_groups": list(
-                train_groups
-            ),
-            "validation_groups": list(
-                validation_groups
-            ),
-            "test_groups": list(
-                test_groups
-            ),
-            "train": self._serialize_samples(
-                train_samples
-            ),
-            "validation": self._serialize_samples(
-                validation_samples
-            ),
-            "test": self._serialize_samples(
-                test_samples
-            ),
-        }
-
-        return self.save_json(
-            Path(experiment_dir)
-            / "split_manifest.json",
-            manifest,
-        )
-
-    @staticmethod
-    def _serialize_samples(
-        samples: Sequence[GraphSample],
-    ) -> list[dict[str, Any]]:
-
-        records = []
-
-        for sample in samples:
-
-            metadata = dict(
-                sample.metadata or {}
-            )
-
-            records.append(
-                {
-                    "sample_id": sample.sample_id,
-                    "behavior_id": sample.behavior_id,
-                    "label": int(sample.label),
-                    "video_id": metadata.get(
-                        "video_id"
-                    ),
-                    "track_id": metadata.get(
-                        "track_id"
-                    ),
-                    "start_frame": metadata.get(
-                        "start_frame"
-                    ),
-                    "end_frame": metadata.get(
-                        "end_frame"
-                    ),
-                }
-            )
-
-        return records
-
-    @staticmethod
-    def _make_serializable(
+    @classmethod
+    def _to_serializable(
+        cls,
         value: Any,
     ) -> Any:
-
         if is_dataclass(value):
-            return ExperimentOutputWriter._make_serializable(
+            return cls._to_serializable(
                 asdict(value)
             )
 
-        if isinstance(value, dict):
+        if isinstance(
+            value,
+            dict,
+        ):
             return {
-                str(key):
-                    ExperimentOutputWriter._make_serializable(
-                        item
-                    )
+                str(key): cls._to_serializable(
+                    item
+                )
                 for key, item in value.items()
             }
 
-        if isinstance(value, (list, tuple)):
+        if isinstance(
+            value,
+            (list, tuple),
+        ):
             return [
-                ExperimentOutputWriter._make_serializable(
-                    item
-                )
+                cls._to_serializable(item)
                 for item in value
             ]
 
-        if hasattr(value, "item"):
-            try:
+        if isinstance(
+            value,
+            np.ndarray,
+        ):
+            return value.tolist()
+
+        if isinstance(
+            value,
+            np.integer,
+        ):
+            return int(value)
+
+        if isinstance(
+            value,
+            np.floating,
+        ):
+            return float(value)
+
+        if isinstance(
+            value,
+            torch.Tensor,
+        ):
+            if value.ndim == 0:
                 return value.item()
-            except (ValueError, TypeError):
-                pass
 
-        if hasattr(value, "tolist"):
-            try:
-                return value.tolist()
-            except (ValueError, TypeError):
-                pass
+            return value.detach().cpu().tolist()
 
-        if isinstance(value, Path):
+        if isinstance(
+            value,
+            Path,
+        ):
             return str(value)
 
         if isinstance(
             value,
-            (
-                str,
-                int,
-                float,
-                bool,
-            ),
-        ):
+            (str, int, float, bool),
+        ) or value is None:
             return value
-
-        if value is None:
-            return None
 
         return str(value)
