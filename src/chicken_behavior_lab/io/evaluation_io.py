@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 from chicken_behavior_lab.io.experiment_io import (
     ExperimentOutputWriter,
@@ -15,13 +14,15 @@ def save_temporal_evaluation(
     experiment_dir: str | Path,
     result: TemporalEvaluationResult,
 ) -> None:
+    """
+    Save temporal evaluation metrics and prediction records.
+    """
 
     writer = ExperimentOutputWriter()
 
     prediction_errors = []
 
     for record in result.prediction_records:
-
         prediction_errors.append(
             {
                 "sample_id": record.sample_id,
@@ -30,7 +31,9 @@ def save_temporal_evaluation(
                 "start_frame": record.start_frame,
                 "end_frame": record.end_frame,
                 "true_index": record.true_index,
-                "predicted_index": record.predicted_index,
+                "predicted_index": (
+                    record.predicted_index
+                ),
                 "confidence": record.confidence,
                 "correct": (
                     record.true_index
