@@ -57,9 +57,7 @@ class TemporalExperimentConfig:
 
     device: str = "cpu"
 
-    checkpoint_dir: str = (
-        "checkpoints/temporal"
-    )
+    checkpoint_dir: str = "checkpoints/temporal"
 
     def validate(self) -> None:
         """
@@ -138,7 +136,7 @@ class TemporalExperimentConfig:
 @dataclass(slots=True)
 class TemporalExperimentData:
     """
-    Prepared data required for temporal training.
+    Prepared data required for temporal training/evaluation.
     """
 
     train_samples: list[GraphSample]
@@ -169,7 +167,7 @@ class TemporalExperimentData:
 @dataclass(slots=True)
 class TemporalExperimentResult:
     """
-    Final outputs of a temporal experiment.
+    Final result of a temporal graph experiment.
     """
 
     history: dict[str, list[float]]
@@ -197,7 +195,7 @@ class TemporalExperiment:
     """
     End-to-end temporal graph behavior experiment.
 
-    Pipeline:
+    The experiment follows this order:
 
         graph samples
             ↓
@@ -211,26 +209,33 @@ class TemporalExperiment:
             ↓
         PyG temporal datasets
             ↓
+        model construction
+            ↓
         training
             ↓
         test evaluation
+
+    Important experimental rule:
+
+        Temporal windows are created AFTER the group-aware split.
+
+    This prevents overlapping windows originating from the same
+    recording/track from leaking across train/validation/test splits.
     """
 
     def __init__(
         self,
         *,
-        model,
-        model_config,
+        model_config: Any,
         config: TemporalExperimentConfig,
     ) -> None:
-
         config.validate()
-
-        self.model = model
 
         self.model_config = model_config
 
         self.config = config
+
+        self.model: torch.nn.Module | None = None
 
     def prepare_data(
         self,
@@ -238,8 +243,16 @@ class TemporalExperiment:
         annotation_set: AnnotationSet,
     ) -> TemporalExperimentData:
         """
-        Align annotations, split groups, create the canonical
-        train-only label mapping, and build temporal datasets.
+        Prepare all datasets required for training.
+
+        Processing order:
+
+            1. Annotation alignment
+            2. Group-aware splitting
+            3. Train-only label mapping
+            4. Apply shared label mapping
+            5. Temporal window construction
+            6. Temporal PyG dataset construction
         """
 
         if not graph_samples:
@@ -247,8 +260,22 @@ class TemporalExperiment:
                 "graph_samples cannot be empty."
             )
 
+        if not isinstance(
+            annotation_set,
+            AnnotationSet,
+        ):
+            raise TypeError(
+                "annotation_set must be an AnnotationSet."
+            )
+
+        annotation_set.validate()
+
+        # ---------------------------------------------------------
+        # 1. Align annotations with graph samples
+        # ---------------------------------------------------------
+
         aligner = AnnotationGraphAligner(
-            strict_conflicts=True
+            strict_conflicts=True,
         )
 
         alignment_result = aligner.align(
@@ -266,6 +293,10 @@ class TemporalExperiment:
             alignment_result.labeled_samples
         )
 
+        # ---------------------------------------------------------
+        # 2. Group-aware train/validation/test split
+        # ---------------------------------------------------------
+
         splitter = GroupAwareSplitter(
             train_ratio=self.config.train_ratio,
             validation_ratio=(
@@ -280,15 +311,15 @@ class TemporalExperiment:
             seed=self.config.split_seed,
         )
 
-        train_samples = (
+        train_samples = list(
             split_result.train
         )
 
-        validation_samples = (
+        validation_samples = list(
             split_result.validation
         )
 
-        test_samples = (
+        test_samples = list(
             split_result.test
         )
 
@@ -307,12 +338,9 @@ class TemporalExperiment:
                 "Test split is empty."
             )
 
-        # IMPORTANT:
-        # The label mapping is created ONLY from
-        # the training split.
-        #
-        # This prevents information from validation
-        # or test sets from influencing the class mapping.
+        # ---------------------------------------------------------
+        # 3. Build label mapping ONLY from training data
+        # ---------------------------------------------------------
 
         label_mapping = (
             AnnotationGraphAligner.build_label_mapping(
@@ -324,6 +352,10 @@ class TemporalExperiment:
             raise ValueError(
                 "Training label mapping is empty."
             )
+
+        # ---------------------------------------------------------
+        # 4. Apply the same mapping to all splits
+        # ---------------------------------------------------------
 
         train_samples = (
             AnnotationGraphAligner.apply_label_mapping(
@@ -346,6 +378,10 @@ class TemporalExperiment:
             )
         )
 
+        # ---------------------------------------------------------
+        # 5. Build temporal windows AFTER splitting
+        # ---------------------------------------------------------
+
         builder = TemporalSequenceBuilder(
             sequence_length=(
                 self.config.sequence_length
@@ -354,13 +390,6 @@ class TemporalExperiment:
                 self.config.sequence_stride
             ),
         )
-
-        # IMPORTANT:
-        # Temporal windows are created AFTER
-        # group-aware splitting.
-        #
-        # This prevents overlapping windows from
-        # crossing train/validation/test boundaries.
 
         train_temporal = builder.build(
             train_samples
@@ -392,6 +421,10 @@ class TemporalExperiment:
                 "no test samples."
             )
 
+        # ---------------------------------------------------------
+        # 6. Build PyG temporal datasets
+        # ---------------------------------------------------------
+
         train_dataset = TemporalPyGDataset(
             train_temporal.samples,
             label_to_index=label_mapping,
@@ -422,18 +455,64 @@ class TemporalExperiment:
             split_result=split_result,
         )
 
+    def build_model(
+        self,
+        *,
+        model: torch.nn.Module,
+    ) -> torch.nn.Module:
+        """
+        Attach a fully configured model to the experiment.
+
+        The model must already be configured with the correct
+        number of output classes.
+
+        This method is intentionally called AFTER prepare_data(),
+        because the number of classes is determined from the
+        training-only label mapping.
+        """
+
+        if not isinstance(
+            model,
+            torch.nn.Module,
+        ):
+            raise TypeError(
+                "model must be an instance of torch.nn.Module."
+            )
+
+        self.model = model
+
+        return self.model
+
     def train_and_evaluate(
         self,
         data: TemporalExperimentData,
     ) -> TemporalExperimentResult:
         """
-        Train the temporal model and evaluate it on the
-        held-out test set.
+        Train the temporal model and evaluate it on the test set.
         """
+
+        if self.model is None:
+            raise RuntimeError(
+                "Model has not been built. "
+                "Call prepare_data() first, then "
+                "build_model(model=...)."
+            )
+
+        if not isinstance(
+            data,
+            TemporalExperimentData,
+        ):
+            raise TypeError(
+                "data must be a TemporalExperimentData instance."
+            )
 
         from chicken_behavior_lab.dataset.temporal_collate import (
             make_temporal_dataloader,
         )
+
+        # ---------------------------------------------------------
+        # Data loaders
+        # ---------------------------------------------------------
 
         train_loader = (
             make_temporal_dataloader(
@@ -474,6 +553,10 @@ class TemporalExperiment:
             )
         )
 
+        # ---------------------------------------------------------
+        # Optimizer
+        # ---------------------------------------------------------
+
         optimizer = torch.optim.AdamW(
             self.model.parameters(),
             lr=self.config.learning_rate,
@@ -482,20 +565,17 @@ class TemporalExperiment:
             ),
         )
 
-        # Standard multiclass classification loss.
-        #
-        # Model output:
-        #     [B, num_classes]
-        #
-        # Target:
-        #     [B]
-        #
-        # CrossEntropyLoss expects exactly this
-        # input/target contract.
+        # ---------------------------------------------------------
+        # Classification loss
+        # ---------------------------------------------------------
 
         criterion = (
             torch.nn.CrossEntropyLoss()
         )
+
+        # ---------------------------------------------------------
+        # Trainer
+        # ---------------------------------------------------------
 
         trainer = build_trainer(
             model=self.model,
@@ -512,6 +592,10 @@ class TemporalExperiment:
             ),
         )
 
+        # ---------------------------------------------------------
+        # Training
+        # ---------------------------------------------------------
+
         history = trainer.fit(
             train_loader=train_loader,
             validation_loader=(
@@ -519,6 +603,10 @@ class TemporalExperiment:
             ),
             epochs=self.config.epochs,
         )
+
+        # ---------------------------------------------------------
+        # Test evaluation
+        # ---------------------------------------------------------
 
         evaluator = TemporalEvaluator(
             model=self.model,
@@ -532,6 +620,10 @@ class TemporalExperiment:
             test_loader
         )
 
+        # ---------------------------------------------------------
+        # Checkpoint information
+        # ---------------------------------------------------------
+
         checkpoint_path = None
 
         if (
@@ -542,5 +634,37 @@ class TemporalExperiment:
                 trainer.checkpoint_manager.path
             )
 
+        # ---------------------------------------------------------
+        # Final result
+        # ---------------------------------------------------------
 
+        return TemporalExperimentResult(
+            history=history,
+            test_metrics=(
+                evaluation.metrics
+            ),
+            label_mapping=(
+                data.label_mapping
+            ),
+            train_size=len(
+                data.train_samples
+            ),
+            validation_size=len(
+                data.validation_samples
+            ),
+            test_size=len(
+                data.test_samples
+            ),
+            train_temporal_size=len(
+                data.train_temporal
+            ),
+            validation_temporal_size=len(
+                data.validation_temporal
+            ),
+            test_temporal_size=len(
+                data.test_temporal
+            ),
+            checkpoint_path=(
+                checkpoint_path
+            ),
         )
