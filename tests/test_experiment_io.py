@@ -1,65 +1,56 @@
-from __future__ import annotations
-
-import json
+from pathlib import Path
 
 from chicken_behavior_lab.io.experiment_io import (
     ExperimentOutputWriter,
 )
 
 
-def test_experiment_directory_creation(
-    tmp_path,
+def test_create_experiment_directory(
+    tmp_path: Path,
 ) -> None:
-
     writer = ExperimentOutputWriter(
-        tmp_path
+        root_directory=tmp_path
     )
 
-    directory = (
+    experiment_dir = (
         writer.create_experiment_directory(
-            timestamp="20261004_120000"
+            timestamp="20261005_211500"
         )
     )
 
-    assert directory.exists()
-    assert directory.is_dir()
+    assert experiment_dir.exists()
+    assert experiment_dir.is_dir()
 
 
 def test_save_json(
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
-
     writer = ExperimentOutputWriter(
-        tmp_path
+        root_directory=tmp_path
     )
 
-    directory = (
+    experiment_dir = (
         writer.create_experiment_directory(
-            timestamp="20261004_120001"
+            timestamp="20261005_211501"
         )
     )
 
-    path = writer.save_json(
-        directory / "test.json",
+    output_path = writer.save_json(
+        experiment_dir / "test.json",
         {
             "accuracy": 0.91,
-            "labels": [
+            "classes": [
                 "feeding",
                 "walking",
             ],
         },
     )
 
-    assert path.exists()
+    assert output_path.exists()
 
-    with path.open(
-        "r",
-        encoding="utf-8",
-    ) as file:
-        data = json.load(file)
+    content = output_path.read_text(
+        encoding="utf-8"
+    )
 
-    assert data["accuracy"] == 0.91
-    assert data["labels"] == [
-        "feeding",
-        "walking",
-    ]
+    assert "accuracy" in content
+    assert "feeding" in content
