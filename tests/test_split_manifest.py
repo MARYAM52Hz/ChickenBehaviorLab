@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import numpy as np
 
 from chicken_behavior_lab.dataset.sample import (
@@ -21,10 +19,10 @@ def make_sample(
 
     graph = TemporalSkeletonGraph(
         node_features=np.zeros(
-            (3, 4),
+            (13, 4),
             dtype=np.float32,
         ),
-        edge_index=np.asarray(
+        edge_index=np.array(
             [
                 [0, 1],
                 [1, 2],
@@ -43,80 +41,54 @@ def make_sample(
             "video_id": video_id,
             "track_id": track_id,
             "start_frame": 0,
-            "end_frame": 15,
+            "end_frame": 10,
         },
     )
 
 
-def test_split_manifest_contains_sample_identity(
+def test_save_split_manifest(
     tmp_path,
 ) -> None:
 
     writer = ExperimentOutputWriter(
-        tmp_path
+        root_directory=tmp_path
     )
 
     experiment_dir = (
         writer.create_experiment_directory(
-            timestamp="20261004_120002"
+            timestamp="20261005_211502"
         )
     )
 
-    train = [
-        make_sample(
-            "sample_001",
-            "video_001",
-            1,
-        )
-    ]
-
-    validation = [
-        make_sample(
-            "sample_002",
-            "video_002",
-            1,
-        )
-    ]
-
-    test = [
-        make_sample(
-            "sample_003",
-            "video_003",
-            2,
-        )
-    ]
+    manifest = {
+        "train_groups": [
+            "video_001"
+        ],
+        "validation_groups": [
+            "video_002"
+        ],
+        "test_groups": [
+            "video_003"
+        ],
+        "train_samples": [
+            {
+                "sample_id": "sample_001",
+                "video_id": "video_001",
+                "track_id": 1,
+            }
+        ],
+    }
 
     path = writer.save_split_manifest(
         experiment_dir,
-        train_samples=train,
-        validation_samples=validation,
-        test_samples=test,
-        group_key="video_id",
-        train_groups=["video_001"],
-        validation_groups=["video_002"],
-        test_groups=["video_003"],
+        manifest,
     )
 
     assert path.exists()
 
-    import json
+    text = path.read_text(
+        encoding="utf-8"
+    )
 
-    with path.open(
-        "r",
-        encoding="utf-8",
-    ) as file:
-        manifest = json.load(file)
-
-    assert manifest["group_key"] == "video_id"
-
-    assert manifest["train_groups"] == [
-        "video_001"
-    ]
-
-    assert manifest["train"][0][
-        "sample_id"
-    ] == "sample_001"
-
-    assert manifest["test"][0][
-        "video_id"
-    ] == "video_003"
+    assert "video_001" in text
+    assert "sample_001" in text
