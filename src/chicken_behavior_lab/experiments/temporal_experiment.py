@@ -542,45 +542,5 @@ class TemporalExperiment:
                 trainer.checkpoint_manager.path
             )
 
-        return TemporalExperimentResult(
-            history=history,
-            test_metrics=(
-                evaluation.metrics
-            ),
-            label_mapping=(
-                data.label_mapping
-            ),
-            train_size=len(
-                data.train_samples
-            ),
-            validation_size=len(
-                data.validation_samples
-            ),
-            test_size=len(
-                data.test_samples
-            ),
-            train_temporal_size=len(
-                data.train_temporal
-            ),
-            validation_temporal_size=len(
-                data.validation_temporal
-            ),
-            test_temporal_size=len(
-                data.test_temporal
-            ),
-            checkpoint_path=(
-                checkpoint_path
-            ),
-            class TemporalExperiment:
 
-    def __init__(
-        self,
-        *,
-        model_config,
-        config: TemporalExperimentConfig,
-    ) -> None:
-        config.validate()
-
-        self.model_config = model_config
-        self.config = config
         )
