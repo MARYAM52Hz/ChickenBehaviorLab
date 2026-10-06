@@ -1,16 +1,13 @@
 from __future__ import annotations
 
 import argparse
-import importlib
 import json
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Callable
 
 import torch
 
-from chicken_behavior_lab.annotations.schema import AnnotationSet
-from chicken_behavior_lab.experiments import (
+from chicken_behavior_lab.experiments.temporal_experiment import (
     TemporalExperiment,
     TemporalExperimentConfig,
 )
@@ -20,43 +17,32 @@ from chicken_behavior_lab.io import (
     load_graph_samples,
     save_temporal_evaluation,
 )
+from chicken_behavior_lab.models.factory import (
+    TemporalModelConfig,
+    build_temporal_model,
+)
 
 
 def parse_args() -> argparse.Namespace:
-
     parser = argparse.ArgumentParser(
         description=(
-            "Run the ChickenBehaviorLab temporal "
-            "graph behavior experiment."
+            "Run a temporal graph behavior "
+            "classification experiment."
         )
     )
 
     parser.add_argument(
         "--graphs",
+        type=str,
         required=True,
         help="Path to graph JSON file or directory.",
     )
 
     parser.add_argument(
         "--annotations",
+        type=str,
         required=True,
         help="Path to annotation JSON file.",
-    )
-
-    parser.add_argument(
-        "--model-factory",
-        required=True,
-        help=(
-            "Python factory in module:function format. "
-            "The factory receives label_mapping and "
-            "returns (model, model_config)."
-        ),
-    )
-
-    parser.add_argument(
-        "--output-root",
-        default="results/experiments",
-        help="Root directory for experiment outputs.",
     )
 
     parser.add_argument(
@@ -91,6 +77,7 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument(
         "--group-key",
+        type=str,
         choices=[
             "video_id",
             "track_id",
@@ -130,260 +117,166 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument(
         "--device",
+        type=str,
         default="cpu",
     )
 
     parser.add_argument(
         "--checkpoint-dir",
+        type=str,
         default="checkpoints/temporal",
+    )
+
+    parser.add_argument(
+        "--results-dir",
+        type=str,
+        default="results/experiments",
+    )
+
+    parser.add_argument(
+        "--spatial-hidden-dim",
+        type=int,
+        default=64,
+    )
+
+    parser.add_argument(
+        "--temporal-hidden-dim",
+        type=int,
+        default=64,
+    )
+
+    parser.add_argument(
+        "--num-gnn-layers",
+        type=int,
+        default=2,
+    )
+
+    parser.add_argument(
+        "--num-gru-layers",
+        type=int,
+        default=1,
+    )
+
+    parser.add_argument(
+        "--dropout",
+        type=float,
+        default=0.0,
+    )
+
+    parser.add_argument(
+        "--bidirectional-gru",
+        action="store_true",
     )
 
     return parser.parse_args()
 
 
-def import_factory(
-    specification: str,
-) -> Callable[..., Any]:
-
-    if ":" not in specification:
-        raise ValueError(
-            "--model-factory must use "
-            "module:function format."
-        )
-
-    module_name, function_name = (
-        specification.split(
-            ":",
-            maxsplit=1,
-        )
-    )
-
-    module = importlib.import_module(
-        module_name
-    )
-
-    factory = getattr(
-        module,
-        function_name,
-        None,
-    )
-
-    if factory is None:
-        raise AttributeError(
-            f"Factory '{function_name}' was not "
-            f"found in module '{module_name}'."
-        )
-
-    if not callable(factory):
-        raise TypeError(
-            "Specified model factory is not callable."
-        )
-
-    return factory
-
-
-def set_seed(
-    seed: int,
+def save_experiment_outputs(
+    *,
+    writer: ExperimentOutputWriter,
+    experiment_dir: Path,
+    experiment: TemporalExperiment,
+    data,
+    result,
 ) -> None:
-
-    torch.manual_seed(seed)
-
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-
-
-def build_config(
-    args: argparse.Namespace,
-) -> TemporalExperimentConfig:
-
-    return TemporalExperimentConfig(
-        sequence_length=args.sequence_length,
-        sequence_stride=args.sequence_stride,
-        train_ratio=args.train_ratio,
-        validation_ratio=args.validation_ratio,
-        test_ratio=args.test_ratio,
-        group_key=args.group_key,
-        split_seed=args.seed,
-        batch_size=args.batch_size,
-        epochs=args.epochs,
-        learning_rate=args.learning_rate,
-        weight_decay=args.weight_decay,
-        device=args.device,
-        checkpoint_dir=args.checkpoint_dir,
-    )
-
-
-def main() -> None:
-
-    args = parse_args()
-
-    set_seed(args.seed)
-
-    config = build_config(args)
-
-    graph_samples = load_graph_samples(
-        args.graphs
-    )
-
-    annotation_set = load_annotations(
-        args.annotations
-    )
-
-    if not isinstance(
-        annotation_set,
-        AnnotationSet,
-    ):
-        raise TypeError(
-            "Annotation loader returned an invalid "
-            "annotation object."
-        )
-
-    output_writer = ExperimentOutputWriter(
-        args.output_root
-    )
-
-    experiment_dir = (
-        output_writer
-        .create_experiment_directory()
-    )
-
-    factory = import_factory(
-        args.model_factory
-    )
-
-    # We first create the experiment with a temporary
-    # model because the final number of classes is known
-    # only after annotation alignment and train-only
-    # label mapping.
-    #
-    # Therefore model construction is intentionally
-    # deferred until after prepare_data().
-    #
-    # The factory itself is called after data preparation.
-
-    temporary_model = None
-
-    experiment_metadata = {
-        "graphs": str(
-            Path(args.graphs)
-        ),
-        "annotations": str(
-            Path(args.annotations)
-        ),
-        "config": asdict(config),
-        "seed": args.seed,
-    }
-
-    output_writer.save_experiment_config(
-        experiment_dir,
-        experiment_metadata,
-    )
-
-    # Build data first to establish the canonical
-    # training-only label mapping.
-    #
-    # Model creation happens immediately afterwards.
-
-    # The experiment object requires a model at
-    # construction time, so a lightweight two-stage
-    # factory contract is used below.
-    #
-    # The factory may return a model directly when
-    # called with label_mapping.
-
-    model_result = factory(
-        label_mapping=None,
-        config=config,
-    )
-
-    if isinstance(
-        model_result,
-        tuple,
-    ):
-        temporary_model = model_result[0]
-        temporary_model_config = model_result[1]
-    else:
-        temporary_model = model_result
-        temporary_model_config = None
-
-    experiment = TemporalExperiment(
-        model=temporary_model,
-        model_config=temporary_model_config,
-        config=config,
-    )
-
-    data = experiment.prepare_data(
-        graph_samples,
-        annotation_set,
-    )
-
-    # Rebuild the model now that the canonical
-    # train-only label mapping is known.
-    model_result = factory(
-        label_mapping=data.label_mapping,
-        config=config,
-    )
-
-    if isinstance(
-        model_result,
-        tuple,
-    ):
-        model = model_result[0]
-        model_config = model_result[1]
-    else:
-        model = model_result
-        model_config = None
-
-    experiment = TemporalExperiment(
-        model=model,
-        model_config=model_config,
-        config=config,
-    )
-
-    result = experiment.train_and_evaluate(
-        data
-    )
-
-    output_writer.save_experiment_config(
+    writer.save_experiment_config(
         experiment_dir,
         {
-            **experiment_metadata,
-            "label_mapping": data.label_mapping,
-            "model_config": model_config,
+            "experiment_config": asdict(
+                experiment.config
+            ),
+            "model_config": asdict(
+                experiment.model_config
+            ),
+            "label_mapping": (
+                data.label_mapping
+            ),
         },
     )
 
-    output_writer.save_training_history(
+    writer.save_training_history(
         experiment_dir,
         result.history,
     )
 
-    output_writer.save_test_metrics(
+    writer.save_test_metrics(
         experiment_dir,
         result.test_metrics,
     )
 
-    output_writer.save_split_manifest(
+    split_result = data.split_result
+
+    split_manifest = {
+        "train_groups": list(
+            split_result.train_groups
+        ),
+        "validation_groups": list(
+            split_result.validation_groups
+        ),
+        "test_groups": list(
+            split_result.test_groups
+        ),
+        "train_samples": [
+            {
+                "sample_id": sample.sample_id,
+                "video_id": sample.get_metadata(
+                    "video_id"
+                ),
+                "track_id": sample.get_metadata(
+                    "track_id"
+                ),
+                "behavior_id": sample.behavior_id,
+                "label": int(sample.label),
+            }
+            for sample in data.train_samples
+        ],
+        "validation_samples": [
+            {
+                "sample_id": sample.sample_id,
+                "video_id": sample.get_metadata(
+                    "video_id"
+                ),
+                "track_id": sample.get_metadata(
+                    "track_id"
+                ),
+                "behavior_id": sample.behavior_id,
+                "label": int(sample.label),
+            }
+            for sample in data.validation_samples
+        ],
+        "test_samples": [
+            {
+                "sample_id": sample.sample_id,
+                "video_id": sample.get_metadata(
+                    "video_id"
+                ),
+                "track_id": sample.get_metadata(
+                    "track_id"
+                ),
+                "behavior_id": sample.behavior_id,
+                "label": int(sample.label),
+            }
+            for sample in data.test_samples
+        ],
+    }
+
+    writer.save_split_manifest(
         experiment_dir,
-        train_samples=data.train_samples,
-        validation_samples=data.validation_samples,
-        test_samples=data.test_samples,
-        group_key=config.group_key,
-        train_groups=(
-            data.split_result.train_groups
-        ),
-        validation_groups=(
-            data.split_result.validation_groups
-        ),
-        test_groups=(
-            data.split_result.test_groups
-        ),
+        split_manifest,
     )
 
     summary = {
-        "label_mapping": result.label_mapping,
+        "model_type": result.model_type,
+        "model_dimensions": (
+            result.model_dimensions
+        ),
+        "label_mapping": (
+            result.label_mapping
+        ),
         "train_size": result.train_size,
-        "validation_size": result.validation_size,
+        "validation_size": (
+            result.validation_size
+        ),
         "test_size": result.test_size,
         "train_temporal_size": (
             result.train_temporal_size
@@ -394,31 +287,273 @@ def main() -> None:
         "test_temporal_size": (
             result.test_temporal_size
         ),
-        "test_metrics": result.test_metrics,
-        "checkpoint_path": result.checkpoint_path,
+        "checkpoint_path": (
+            result.checkpoint_path
+        ),
+        "test_metrics": (
+            result.test_metrics
+        ),
     }
 
-    output_writer.save_summary(
+    writer.save_summary(
         experiment_dir,
         summary,
     )
 
-    print(
-        json.dumps(
-            {
-                "experiment_dir": str(
-                    experiment_dir
-                ),
-                "test_metrics": result.test_metrics,
-                "label_mapping": result.label_mapping,
-                "checkpoint_path": (
-                    result.checkpoint_path
-                ),
-            },
-            indent=2,
-            ensure_ascii=False,
+
+def main() -> None:
+    args = parse_args()
+
+    # ---------------------------------------------------------
+    # Load raw data
+    # ---------------------------------------------------------
+
+    graph_samples = load_graph_samples(
+        args.graphs
+    )
+
+    annotation_set = load_annotations(
+        args.annotations
+    )
+
+    # ---------------------------------------------------------
+    # Experiment configuration
+    # ---------------------------------------------------------
+
+    experiment_config = (
+        TemporalExperimentConfig(
+            sequence_length=(
+                args.sequence_length
+            ),
+            sequence_stride=(
+                args.sequence_stride
+            ),
+            train_ratio=(
+                args.train_ratio
+            ),
+            validation_ratio=(
+                args.validation_ratio
+            ),
+            test_ratio=(
+                args.test_ratio
+            ),
+            group_key=args.group_key,
+            split_seed=args.seed,
+            batch_size=args.batch_size,
+            epochs=args.epochs,
+            learning_rate=(
+                args.learning_rate
+            ),
+            weight_decay=(
+                args.weight_decay
+            ),
+            device=args.device,
+            checkpoint_dir=(
+                args.checkpoint_dir
+            ),
         )
     )
+
+    # ---------------------------------------------------------
+    # Initial model configuration
+    #
+    # node/edge dimensions are inferred after prepare_data().
+    # ---------------------------------------------------------
+
+    model_config = None
+
+    # ---------------------------------------------------------
+    # Create experiment
+    # ---------------------------------------------------------
+
+    experiment = TemporalExperiment(
+        model_config=model_config,
+        config=experiment_config,
+    )
+
+    # ---------------------------------------------------------
+    # Prepare data
+    # ---------------------------------------------------------
+
+    data = experiment.prepare_data(
+        graph_samples=graph_samples,
+        annotation_set=annotation_set,
+    )
+
+    # ---------------------------------------------------------
+    # Build model AFTER train-only label mapping
+    # ---------------------------------------------------------
+
+    dimensions = (
+        experiment.model_dimensions
+    )
+
+    model_config = TemporalModelConfig(
+        node_feature_dim=(
+            dimensions["node_feature_dim"]
+        ),
+        edge_feature_dim=(
+            dimensions["edge_feature_dim"]
+        ),
+        spatial_hidden_dim=(
+            args.spatial_hidden_dim
+        ),
+        temporal_hidden_dim=(
+            args.temporal_hidden_dim
+        ),
+        num_gnn_layers=(
+            args.num_gnn_layers
+        ),
+        num_gru_layers=(
+            args.num_gru_layers
+        ),
+        dropout=args.dropout,
+        bidirectional_gru=(
+            args.bidirectional_gru
+        ),
+    )
+
+    experiment.model_config = model_config
+
+    model = build_temporal_model(
+        model_config=model_config,
+        num_classes=len(
+            data.label_mapping
+        ),
+    )
+
+    experiment.build_model(
+        model=model
+    )
+
+    # ---------------------------------------------------------
+    # Train and evaluate
+    # ---------------------------------------------------------
+
+    result = experiment.train_and_evaluate(
+        data
+    )
+
+    # ---------------------------------------------------------
+    # Create experiment output directory
+    # ---------------------------------------------------------
+
+    writer = ExperimentOutputWriter(
+        root_directory=args.results_dir
+    )
+
+    experiment_dir = (
+        writer.create_experiment_directory()
+    )
+
+    # ---------------------------------------------------------
+    # Save all outputs
+    # ---------------------------------------------------------
+
+    save_experiment_outputs(
+        writer=writer,
+        experiment_dir=experiment_dir,
+        experiment=experiment,
+        data=data,
+        result=result,
+    )
+
+    # ---------------------------------------------------------
+    # Save evaluation prediction records
+    # ---------------------------------------------------------
+
+    # Re-run evaluator to retain complete prediction records.
+    from chicken_behavior_lab.dataset.temporal_collate import (
+        make_temporal_dataloader,
+    )
+    from chicken_behavior_lab.training.temporal_evaluator import (
+        TemporalEvaluator,
+    )
+
+    test_loader = make_temporal_dataloader(
+        data.test_dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=0,
+    )
+
+    evaluator = TemporalEvaluator(
+        model=experiment.model,
+        device=args.device,
+        label_to_index=data.label_mapping,
+    )
+
+    evaluation = evaluator.evaluate(
+        test_loader
+    )
+
+    save_temporal_evaluation(
+        experiment_dir,
+        evaluation,
+    )
+
+    # ---------------------------------------------------------
+    # Console summary
+    # ---------------------------------------------------------
+
+    print()
+    print("=" * 70)
+    print("Temporal Experiment Completed")
+    print("=" * 70)
+
+    print(
+        f"Experiment directory: {experiment_dir}"
+    )
+
+    print(
+        f"Train samples: {result.train_size}"
+    )
+
+    print(
+        f"Validation samples: "
+        f"{result.validation_size}"
+    )
+
+    print(
+        f"Test samples: {result.test_size}"
+    )
+
+    print(
+        f"Train temporal windows: "
+        f"{result.train_temporal_size}"
+    )
+
+    print(
+        f"Validation temporal windows: "
+        f"{result.validation_temporal_size}"
+    )
+
+    print(
+        f"Test temporal windows: "
+        f"{result.test_temporal_size}"
+    )
+
+    print(
+        f"Label mapping: "
+        f"{result.label_mapping}"
+    )
+
+    print(
+        f"Test accuracy: "
+        f"{result.test_metrics['accuracy']:.4f}"
+    )
+
+    print(
+        f"Test macro F1: "
+        f"{result.test_metrics['macro_f1']:.4f}"
+    )
+
+    print(
+        f"Checkpoint: "
+        f"{result.checkpoint_path}"
+    )
+
+    print("=" * 70)
 
 
 if __name__ == "__main__":
