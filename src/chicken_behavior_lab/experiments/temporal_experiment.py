@@ -1,39 +1,27 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any
 
 import torch
 from torch import nn
 
-from chicken_behavior_lab.alignment import (
-    AnnotationGraphAligner,
-)
-from chicken_behavior_lab.annotations.schema import (
-    AnnotationSet,
-)
+from chicken_behavior_lab.alignment import AnnotationGraphAligner
+from chicken_behavior_lab.annotations.schema import AnnotationSet
 from chicken_behavior_lab.dataset import (
     GroupAwareSplitter,
     TemporalPyGDataset,
     TemporalSequenceBuilder,
 )
-from chicken_behavior_lab.dataset.sample import (
-    GraphSample,
-)
-from chicken_behavior_lab.models.factory import (
-    infer_temporal_model_dimensions,
-)
-from chicken_behavior_lab.training import (
-    TemporalEvaluator,
-    build_trainer,
-)
+from chicken_behavior_lab.dataset.sample import GraphSample
+from chicken_behavior_lab.models.factory import infer_temporal_model_dimensions
+from chicken_behavior_lab.training import TemporalEvaluator, build_trainer
 
 
 @dataclass(slots=True)
 class TemporalExperimentConfig:
-    """
-    Configuration for a temporal graph behavior experiment.
-    """
+    """Configuration for an end-to-end temporal behavior experiment."""
 
     sequence_length: int = 16
     sequence_stride: int = 4
@@ -47,100 +35,79 @@ class TemporalExperimentConfig:
 
     batch_size: int = 8
     num_workers: int = 0
-    epochs: int = 20
 
+    epochs: int = 20
     learning_rate: float = 1e-3
     weight_decay: float = 1e-4
 
     device: str = "cpu"
+
     checkpoint_dir: str = "checkpoints/temporal"
 
     def validate(self) -> None:
-        """Validate all experiment configuration values."""
+        """Validate experiment configuration."""
 
-        if self.sequence_length < 1:
+        if self.sequence_length <= 0:
+            raise ValueError("sequence_length must be positive.")
+
+        if self.sequence_stride <= 0:
+            raise ValueError("sequence_stride must be positive.")
+
+        if self.sequence_stride > self.sequence_length:
             raise ValueError(
-                "sequence_length must be >= 1."
+                "sequence_stride cannot be greater than sequence_length."
             )
 
-        if self.sequence_stride < 1:
-            raise ValueError(
-                "sequence_stride must be >= 1."
-            )
+        if self.train_ratio <= 0:
+            raise ValueError("train_ratio must be positive.")
 
-        if self.batch_size < 1:
-            raise ValueError(
-                "batch_size must be >= 1."
-            )
+        if self.validation_ratio <= 0:
+            raise ValueError("validation_ratio must be positive.")
 
-        if self.num_workers < 0:
-            raise ValueError(
-                "num_workers must be >= 0."
-            )
+        if self.test_ratio <= 0:
+            raise ValueError("test_ratio must be positive.")
 
-        if self.epochs < 1:
-            raise ValueError(
-                "epochs must be >= 1."
-            )
-
-        if self.learning_rate <= 0:
-            raise ValueError(
-                "learning_rate must be > 0."
-            )
-
-        if self.weight_decay < 0:
-            raise ValueError(
-                "weight_decay must be >= 0."
-            )
-
-        if not self.checkpoint_dir.strip():
-            raise ValueError(
-                "checkpoint_dir cannot be empty."
-            )
-
-        ratios = (
-            self.train_ratio,
-            self.validation_ratio,
-            self.test_ratio,
+        ratio_sum = (
+            self.train_ratio
+            + self.validation_ratio
+            + self.test_ratio
         )
 
-        if any(
-            ratio <= 0.0
-            for ratio in ratios
-        ):
+        if abs(ratio_sum - 1.0) > 1e-8:
             raise ValueError(
-                "All split ratios must be > 0."
+                "train_ratio + validation_ratio + test_ratio must equal 1.0."
             )
 
-        if abs(sum(ratios) - 1.0) > 1e-8:
+        if self.group_key not in {"video_id", "track_id"}:
             raise ValueError(
-                "train_ratio + validation_ratio "
-                "+ test_ratio must equal 1.0."
+                "group_key must be either 'video_id' or 'track_id'."
             )
 
-        if self.group_key not in {
-            "video_id",
-            "track_id",
-        }:
-            raise ValueError(
-                "group_key must be either "
-                "'video_id' or 'track_id'."
-            )
+        if self.batch_size <= 0:
+            raise ValueError("batch_size must be positive.")
 
-        if not self.device.strip():
-            raise ValueError(
-                "device cannot be empty."
-            )
+        if self.num_workers < 0:
+            raise ValueError("num_workers cannot be negative.")
+
+        if self.epochs <= 0:
+            raise ValueError("epochs must be positive.")
+
+        if self.learning_rate <= 0:
+            raise ValueError("learning_rate must be positive.")
+
+        if self.weight_decay < 0:
+            raise ValueError("weight_decay cannot be negative.")
+
+        if not self.device:
+            raise ValueError("device cannot be empty.")
+
+        if not self.checkpoint_dir:
+            raise ValueError("checkpoint_dir cannot be empty.")
 
 
 @dataclass(slots=True)
 class TemporalExperimentData:
-    """
-    Prepared data for training and evaluation.
-
-    The original aligned samples are split before temporal
-    windows are created.
-    """
+    """Prepared datasets and metadata for a temporal experiment."""
 
     train_samples: list[GraphSample]
     validation_samples: list[GraphSample]
@@ -162,12 +129,10 @@ class TemporalExperimentData:
 
 @dataclass(slots=True)
 class TemporalExperimentResult:
-    """Serializable summary of a completed experiment."""
+    """Final result of a temporal experiment."""
 
     history: dict[str, list[float]]
-
     test_metrics: dict[str, Any]
-
     label_mapping: dict[str, int]
 
     train_size: int
@@ -181,37 +146,21 @@ class TemporalExperimentResult:
     checkpoint_path: str | None
 
     model_type: str | None = None
-
-    model_dimensions: dict[str, Any] | None = None
+    model_dimensions: dict[str, int | None] | None = None
 
     split_groups: dict[str, list[str]] | None = None
 
+    # Preserve evaluator output so prediction errors can be saved
+    # without evaluating the test set a second time.
+    prediction_records: list[dict[str, Any]] | None = None
+
 
 class TemporalExperiment:
-    """
-    End-to-end temporal graph behavior experiment.
-
-    Pipeline:
-        1. Align graph samples with behavior annotations.
-        2. Split samples by video or composite video-track group.
-        3. Build the class mapping using training samples only.
-        4. Apply the same mapping to all splits.
-        5. Create temporal windows separately within each split.
-        6. Construct PyG datasets.
-        7. Infer model input dimensions.
-        8. Attach a model with the correct number of classes.
-        9. Train and checkpoint the model.
-       10. Evaluate the model on the held-out test split.
-
-    Important:
-        Temporal windows must not be randomly split after creation.
-        This experiment splits graph samples before windowing.
-    """
+    """End-to-end experiment orchestration for temporal behavior recognition."""
 
     def __init__(
         self,
-        *,
-        model_config: Any,
+        model_config: Any | None,
         config: TemporalExperimentConfig,
     ) -> None:
         config.validate()
@@ -220,50 +169,33 @@ class TemporalExperiment:
         self.model_config = model_config
 
         self.model: nn.Module | None = None
-
-        self._prepared_data: (
-            TemporalExperimentData | None
-        ) = None
+        self._prepared_data: TemporalExperimentData | None = None
 
     @property
-    def prepared_data(
-        self,
-    ) -> TemporalExperimentData:
-        """Return prepared data or raise if preparation has not run."""
+    def prepared_data(self) -> TemporalExperimentData:
+        """Return prepared experiment data."""
 
         if self._prepared_data is None:
             raise RuntimeError(
-                "Data has not been prepared yet. "
+                "Experiment data has not been prepared. "
                 "Call prepare_data() first."
             )
 
         return self._prepared_data
 
     @property
-    def model_dimensions(
-        self,
-    ) -> dict[str, Any]:
-        """
-        Infer model input dimensions from the training dataset.
-
-        Expected dimensions include:
-            node_feature_dim
-            edge_feature_dim
-        """
-
-        data = self.prepared_data
+    def model_dimensions(self) -> dict[str, int | None]:
+        """Infer temporal model dimensions from the training dataset."""
 
         return infer_temporal_model_dimensions(
-            data.train_dataset
+            self.prepared_data.train_dataset
         )
 
     @property
     def num_classes(self) -> int:
-        """Number of behavior classes present in the training mapping."""
+        """Return the number of behavior classes."""
 
-        return len(
-            self.prepared_data.label_mapping
-        )
+        return len(self.prepared_data.label_mapping)
 
     def prepare_data(
         self,
@@ -271,28 +203,37 @@ class TemporalExperiment:
         annotation_set: AnnotationSet,
     ) -> TemporalExperimentData:
         """
-        Align annotations, split the data, and create temporal datasets.
+        Align annotations, split groups, build temporal windows, and create
+        PyG datasets.
 
-        Temporal windows are created only after group-aware splitting.
-        The label mapping is inferred exclusively from the training split.
+        The order is intentionally:
+
+            alignment
+                ↓
+            group split
+                ↓
+            label mapping from train only
+                ↓
+            temporal window construction
+                ↓
+            PyG dataset creation
+
+        This prevents temporal-window leakage between train/validation/test.
         """
 
         if not graph_samples:
-            raise ValueError(
-                "graph_samples cannot be empty."
-            )
+            raise ValueError("graph_samples cannot be empty.")
 
-        if not isinstance(
-            annotation_set,
-            AnnotationSet,
-        ):
+        if not isinstance(annotation_set, AnnotationSet):
             raise TypeError(
                 "annotation_set must be an AnnotationSet."
             )
 
         annotation_set.validate()
 
-        # 1. Align annotations with graph samples.
+        # ---------------------------------------------------------------
+        # 1. Align frame-level graph samples with behavior annotations.
+        # ---------------------------------------------------------------
         aligner = AnnotationGraphAligner(
             strict_conflicts=True,
         )
@@ -302,123 +243,105 @@ class TemporalExperiment:
             annotation_set,
         )
 
-        labeled_samples = list(
-            alignment_result.labeled_samples
-        )
+        labeled_samples = alignment_result.labeled_samples
 
         if not labeled_samples:
             raise ValueError(
-                "Annotation alignment produced no labeled samples."
+                "Annotation alignment produced no labeled graph samples."
             )
 
-        # 2. Split labeled graph samples before temporal windowing.
+        # ---------------------------------------------------------------
+        # 2. Split by group BEFORE temporal windows are created.
+        # ---------------------------------------------------------------
         splitter = GroupAwareSplitter(
             train_ratio=self.config.train_ratio,
             validation_ratio=self.config.validation_ratio,
             test_ratio=self.config.test_ratio,
             group_key=self.config.group_key,
-        )
-
-        split_result = splitter.split(
-            labeled_samples,
             seed=self.config.split_seed,
         )
 
-        train_samples = list(
-            split_result.train
-        )
+        split_result = splitter.split(labeled_samples)
 
-        validation_samples = list(
-            split_result.validation
-        )
-
-        test_samples = list(
-            split_result.test
-        )
+        train_samples = list(split_result.train)
+        validation_samples = list(split_result.validation)
+        test_samples = list(split_result.test)
 
         if not train_samples:
-            raise ValueError(
-                "Training split is empty."
-            )
+            raise ValueError("Training split is empty.")
 
         if not validation_samples:
-            raise ValueError(
-                "Validation split is empty."
-            )
+            raise ValueError("Validation split is empty.")
 
         if not test_samples:
-            raise ValueError(
-                "Test split is empty."
-            )
+            raise ValueError("Test split is empty.")
 
-        # 3. Build a canonical label mapping from training samples only.
-        label_mapping = (
-            AnnotationGraphAligner.build_label_mapping(
-                train_samples
-            )
+        # ---------------------------------------------------------------
+        # 3. Build label mapping from TRAINING DATA ONLY.
+        # ---------------------------------------------------------------
+        label_mapping = aligner.build_label_mapping(
+            train_samples
         )
 
         if not label_mapping:
             raise ValueError(
-                "Training label mapping is empty."
+                "Training split produced an empty label mapping."
             )
 
-        # 4. Apply the same mapping to every split.
-        train_samples = (
-            AnnotationGraphAligner.apply_label_mapping(
-                train_samples,
-                label_mapping,
-            )
+        # ---------------------------------------------------------------
+        # 4. Apply the train-derived mapping to every split.
+        #
+        # This deliberately rejects validation/test-only classes.
+        # Such a class would indicate that the split is incompatible
+        # with the supervised classification setup.
+        # ---------------------------------------------------------------
+        train_samples = aligner.apply_label_mapping(
+            train_samples,
+            label_mapping,
         )
 
-        validation_samples = (
-            AnnotationGraphAligner.apply_label_mapping(
-                validation_samples,
-                label_mapping,
-            )
+        validation_samples = aligner.apply_label_mapping(
+            validation_samples,
+            label_mapping,
         )
 
-        test_samples = (
-            AnnotationGraphAligner.apply_label_mapping(
-                test_samples,
-                label_mapping,
-            )
+        test_samples = aligner.apply_label_mapping(
+            test_samples,
+            label_mapping,
         )
 
-        # 5. Create temporal windows independently for each split.
-        builder = TemporalSequenceBuilder(
+        # ---------------------------------------------------------------
+        # 5. Create temporal sequences AFTER group splitting.
+        # ---------------------------------------------------------------
+        sequence_builder = TemporalSequenceBuilder(
             sequence_length=self.config.sequence_length,
-            sequence_stride=self.config.sequence_stride,
+            stride=self.config.sequence_stride,
         )
 
-        train_temporal = builder.build(
-            train_samples
-        )
-
-        validation_temporal = builder.build(
+        train_temporal = sequence_builder.build(train_samples)
+        validation_temporal = sequence_builder.build(
             validation_samples
         )
+        test_temporal = sequence_builder.build(test_samples)
 
-        test_temporal = builder.build(
-            test_samples
-        )
-
-        if not train_temporal.samples:
+        if len(train_temporal) == 0:
             raise ValueError(
-                "Temporal windowing produced no training samples."
+                "Temporal sequence construction produced no training samples."
             )
 
-        if not validation_temporal.samples:
+        if len(validation_temporal) == 0:
             raise ValueError(
-                "Temporal windowing produced no validation samples."
+                "Temporal sequence construction produced no validation samples."
             )
 
-        if not test_temporal.samples:
+        if len(test_temporal) == 0:
             raise ValueError(
-                "Temporal windowing produced no test samples."
+                "Temporal sequence construction produced no test samples."
             )
 
-        # 6. Construct PyG datasets with one shared label mapping.
+        # ---------------------------------------------------------------
+        # 6. Create PyG datasets with the SAME canonical mapping.
+        # ---------------------------------------------------------------
         train_dataset = TemporalPyGDataset(
             train_temporal.samples,
             label_to_index=label_mapping,
@@ -449,148 +372,61 @@ class TemporalExperiment:
             split_result=split_result,
         )
 
-        # Store only after the preparation steps succeed.
         self._prepared_data = data
 
-        # A new preparation invalidates any previously attached model.
+        # Rebuilding the data invalidates any previously attached model.
         self.model = None
 
         return data
 
     def build_model(
         self,
-        *,
         model: nn.Module,
     ) -> nn.Module:
-        """
-        Attach a model after data preparation.
+        """Attach and validate a model for the prepared experiment."""
 
-        If the model exposes a Sequential classifier whose final
-        layer is Linear, verify that its output dimension equals
-        the number of classes in the training label mapping.
-        """
-
-        if not isinstance(
-            model,
-            nn.Module,
-        ):
+        if not isinstance(model, nn.Module):
             raise TypeError(
                 "model must be an instance of torch.nn.Module."
             )
 
-        data = self.prepared_data
+        expected_num_classes = self.num_classes
 
-        expected_num_classes = len(
-            data.label_mapping
-        )
+        # TemporalBehaviorGNN currently exposes its classifier as a
+        # Sequential module whose final layer is Linear.
+        classifier = getattr(model, "classifier", None)
 
-        if expected_num_classes < 1:
-            raise ValueError(
-                "Training label mapping contains no classes."
-            )
-
-        classifier = getattr(
-            model,
-            "classifier",
-            None,
-        )
-
-        if isinstance(
-            classifier,
-            nn.Sequential,
-        ):
+        if isinstance(classifier, nn.Sequential) and len(classifier) > 0:
             final_layer = classifier[-1]
 
-            if isinstance(
-                final_layer,
-                nn.Linear,
-            ):
-                actual_num_classes = (
-                    final_layer.out_features
-                )
+            if isinstance(final_layer, nn.Linear):
+                actual_num_classes = final_layer.out_features
 
                 if actual_num_classes != expected_num_classes:
                     raise ValueError(
-                        "Model output dimension does not match "
-                        "the training label mapping. "
-                        f"Expected {expected_num_classes}, "
-                        f"found {actual_num_classes}."
+                        "Model output dimension does not match the "
+                        f"experiment label mapping: expected "
+                        f"{expected_num_classes}, got "
+                        f"{actual_num_classes}."
                     )
 
         self.model = model
 
-        return self.model
+        return model
 
-    def train_and_evaluate(
-        self,
-        data: TemporalExperimentData | None = None,
-    ) -> TemporalExperimentResult:
-        """
-        Train the attached model and evaluate it on the test dataset.
-
-        Validation data is used during training for model selection.
-        Test data is used only for final evaluation.
-        """
+    def _build_loaders(self) -> tuple[Any, Any, Any]:
+        """Build train, validation, and test data loaders."""
 
         if self.model is None:
             raise RuntimeError(
-                "Model has not been built. Call prepare_data() "
-                "and then build_model(model=...) first."
+                "Model has not been built. Call build_model() first."
             )
 
-        if data is None:
-            data = self.prepared_data
-
-        if not isinstance(
-            data,
-            TemporalExperimentData,
-        ):
-            raise TypeError(
-                "data must be a TemporalExperimentData instance."
-            )
-
-        if self._prepared_data is not data:
-            raise ValueError(
-                "The supplied data is not the data currently "
-                "prepared by this experiment."
-            )
-
-        # Validate classifier dimensions again before training.
-        expected_num_classes = len(
-            data.label_mapping
-        )
-
-        classifier = getattr(
-            self.model,
-            "classifier",
-            None,
-        )
-
-        if isinstance(
-            classifier,
-            nn.Sequential,
-        ):
-            final_layer = classifier[-1]
-
-            if isinstance(
-                final_layer,
-                nn.Linear,
-            ):
-                if (
-                    final_layer.out_features
-                    != expected_num_classes
-                ):
-                    raise ValueError(
-                        "Model output dimension changed after "
-                        "build_model(). Expected "
-                        f"{expected_num_classes} classes, found "
-                        f"{final_layer.out_features}."
-                    )
-
-        # Import locally to avoid unnecessary module-level coupling.
         from chicken_behavior_lab.dataset.temporal_collate import (
             make_temporal_dataloader,
         )
+
+        data = self.prepared_data
 
         train_loader = make_temporal_dataloader(
             data.train_dataset,
@@ -613,7 +449,50 @@ class TemporalExperiment:
             num_workers=self.config.num_workers,
         )
 
-        # Configure optimizer and classification loss.
+        return (
+            train_loader,
+            validation_loader,
+            test_loader,
+        )
+
+    def train_and_evaluate(
+        self,
+        data: TemporalExperimentData | None = None,
+    ) -> TemporalExperimentResult:
+        """
+        Train the model and evaluate the BEST checkpoint on the test set.
+        """
+
+        if self.model is None:
+            raise RuntimeError(
+                "Model has not been built. Call build_model() first."
+            )
+
+        if data is None:
+            data = self.prepared_data
+
+        if not isinstance(data, TemporalExperimentData):
+            raise TypeError(
+                "data must be a TemporalExperimentData instance."
+            )
+
+        if self._prepared_data is not data:
+            raise ValueError(
+                "The supplied data object is not the experiment's "
+                "currently prepared data."
+            )
+
+        if self.model_config is None:
+            raise RuntimeError(
+                "model_config is required before training."
+            )
+
+        (
+            train_loader,
+            validation_loader,
+            test_loader,
+        ) = self._build_loaders()
+
         optimizer = torch.optim.AdamW(
             self.model.parameters(),
             lr=self.config.learning_rate,
@@ -622,85 +501,113 @@ class TemporalExperiment:
 
         criterion = nn.CrossEntropyLoss()
 
-        # Build trainer using the existing project API.
         trainer = build_trainer(
             model=self.model,
-            model_config=self.model_config,
             optimizer=optimizer,
             criterion=criterion,
-            device=self.config.device,
-            checkpoint_dir=self.config.checkpoint_dir,
             label_mapping=data.label_mapping,
-            training_config=asdict(self.config),
+            model_config=self.model_config,
+            experiment_config=asdict(self.config),
+            checkpoint_dir=self.config.checkpoint_dir,
+            device=self.config.device,
         )
 
-        # Train using the validation split.
         history = trainer.fit(
             train_loader=train_loader,
             validation_loader=validation_loader,
             epochs=self.config.epochs,
         )
 
-        # Evaluate on the held-out test split.
+        # ---------------------------------------------------------------
+        # IMPORTANT:
+        # The trainer may have observed a better validation checkpoint
+        # during training than the final epoch.
+        #
+        # Therefore we explicitly restore the best checkpoint BEFORE
+        # evaluating on the test set.
+        # ---------------------------------------------------------------
+        checkpoint_path: str | None = None
+
+        checkpoint_manager = getattr(
+            trainer,
+            "checkpoint_manager",
+            None,
+        )
+
+        if checkpoint_manager is not None:
+            checkpoint_file = getattr(
+                checkpoint_manager,
+                "checkpoint_path",
+                None,
+            )
+
+            if checkpoint_file is not None:
+                checkpoint_path = str(checkpoint_file)
+
+        # Fall back to the conventional checkpoint path if the trainer
+        # does not expose checkpoint_path directly.
+        if checkpoint_path is None:
+            candidate = (
+                Path(self.config.checkpoint_dir)
+                / "checkpoint.pt"
+            )
+
+            if candidate.exists():
+                checkpoint_path = str(candidate)
+
+        if checkpoint_path is not None and Path(
+            checkpoint_path
+        ).exists():
+            trainer.load_checkpoint(checkpoint_path)
+
+        # ---------------------------------------------------------------
+        # Evaluate the restored best model.
+        # ---------------------------------------------------------------
         evaluator = TemporalEvaluator(
             model=self.model,
             device=self.config.device,
             label_to_index=data.label_mapping,
         )
 
-        evaluation = evaluator.evaluate(
-            test_loader
+        evaluation = evaluator.evaluate(test_loader)
+
+        test_metrics = evaluation.metrics
+
+        prediction_records = list(
+            getattr(
+                evaluation,
+                "prediction_records",
+                [],
+            )
         )
 
-        checkpoint_path = None
-
-        if trainer.checkpoint_manager is not None:
-            checkpoint_path = str(
-                trainer.checkpoint_manager.path
-            )
-
         split_groups = {
-            "train": list(
-                data.split_result.train_groups
-            ),
-            "validation": list(
-                data.split_result.validation_groups
-            ),
-            "test": list(
-                data.split_result.test_groups
-            ),
+            "train": list(data.split_result.train_groups),
+            "validation": list(data.split_result.validation_groups),
+            "test": list(data.split_result.test_groups),
         }
+
+        model_type = getattr(
+            self.model,
+            "model_type",
+            self.model.__class__.__name__,
+        )
 
         return TemporalExperimentResult(
             history=history,
-            test_metrics=evaluation.metrics,
-            label_mapping=dict(
-                data.label_mapping
-            ),
-            train_size=len(
-                data.train_samples
-            ),
-            validation_size=len(
-                data.validation_samples
-            ),
-            test_size=len(
-                data.test_samples
-            ),
-            train_temporal_size=len(
-                data.train_temporal
-            ),
+            test_metrics=test_metrics,
+            label_mapping=dict(data.label_mapping),
+            train_size=len(data.train_samples),
+            validation_size=len(data.validation_samples),
+            test_size=len(data.test_samples),
+            train_temporal_size=len(data.train_temporal),
             validation_temporal_size=len(
                 data.validation_temporal
             ),
-            test_temporal_size=len(
-                data.test_temporal
-            ),
+            test_temporal_size=len(data.test_temporal),
             checkpoint_path=checkpoint_path,
-            model_type=getattr(
-                self.model,
-                "model_type",
-                self.model.__class__.__name__,
-            ),
+            model_type=model_type,
             model_dimensions=self.model_dimensions,
             split_groups=split_groups,
+            prediction_records=prediction_records,
         )
