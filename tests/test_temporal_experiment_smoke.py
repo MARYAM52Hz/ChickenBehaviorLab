@@ -1,22 +1,26 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
-
-import pytest
 
 from chicken_behavior_lab.annotations.schema import (
     AnnotationSet,
     BehaviorAnnotation,
 )
+from chicken_behavior_lab.dataset.sample import GraphSample
 from chicken_behavior_lab.experiments.temporal_experiment import (
     TemporalExperiment,
     TemporalExperimentConfig,
 )
+from chicken_behavior_lab.graph.graph import TemporalSkeletonGraph
 from chicken_behavior_lab.models.factory import (
     TemporalModelConfig,
     build_temporal_model,
 )
+
+
+NODE_FEATURE_DIM = 4
+EDGE_FEATURE_DIM = 1
+FRAMES_PER_VIDEO = 16
 
 
 def _make_graph_sample(
@@ -25,39 +29,18 @@ def _make_graph_sample(
     track_id: int,
     frame_index: int,
     behavior_id: str,
-    node_feature_dim: int = 4,
-):
-    """
-    Create a minimal synthetic frame-level graph sample.
-
-    The graph contains three nodes arranged as a simple chain:
-
-        0 ---- 1 ---- 2
-    """
-
-    from chicken_behavior_lab.dataset.sample import GraphSample
-    from chicken_behavior_lab.graph.graph import TemporalSkeletonGraph
+) -> GraphSample:
+    """Create one synthetic frame-level skeleton graph."""
 
     node_features = [
         [
             float(frame_index),
-            0.0,
+            float(node_index),
             1.0,
             0.0,
         ]
-        for _ in range(3)
+        for node_index in range(3)
     ]
-
-    if node_feature_dim != 4:
-        node_features = [
-            [
-                float(frame_index)
-                if feature_index == 0
-                else 0.0
-                for feature_index in range(node_feature_dim)
-            ]
-            for _ in range(3)
-        ]
 
     edge_index = [
         [0, 1],
@@ -89,41 +72,36 @@ def _make_graph_sample(
     )
 
 
-def _make_synthetic_samples(
-    frames_per_group: int = 16,
-):
+def _make_synthetic_samples() -> list[GraphSample]:
     """
-    Create three video groups.
+    Create six independent video groups.
 
-    Each video contains one chicken track and a single behavior.
-
-    Video 1 -> feeding
-    Video 2 -> feeding
-    Video 3 -> walking
-
-    This gives the group-aware splitter enough independent groups for
-    train/validation/test.
+    Two groups are provided for each behavior so that a group-aware
+    train/validation/test split can preserve all classes in training.
     """
-
-    samples = []
 
     group_specs = [
-        ("video_001", 1, "feeding"),
-        ("video_002", 1, "feeding"),
-        ("video_003", 1, "walking"),
+        ("video_001", "feeding"),
+        ("video_002", "feeding"),
+        ("video_003", "walking"),
+        ("video_004", "walking"),
+        ("video_005", "resting"),
+        ("video_006", "resting"),
     ]
 
-    for video_id, track_id, behavior_id in group_specs:
-        for frame_index in range(frames_per_group):
+    samples: list[GraphSample] = []
+
+    for video_id, behavior_id in group_specs:
+        for frame_index in range(FRAMES_PER_VIDEO):
             samples.append(
                 _make_graph_sample(
                     sample_id=(
                         f"{video_id}_"
-                        f"{track_id}_"
-                        f"{frame_index:04d}"
+                        f"track_1_"
+                        f"frame_{frame_index:04d}"
                     ),
                     video_id=video_id,
-                    track_id=track_id,
+                    track_id=1,
                     frame_index=frame_index,
                     behavior_id=behavior_id,
                 )
@@ -133,35 +111,28 @@ def _make_synthetic_samples(
 
 
 def _make_annotations() -> AnnotationSet:
-    """
-    Create annotations covering the complete synthetic videos.
-    """
+    """Create annotations covering all synthetic videos."""
+
+    group_specs = [
+        ("video_001", "feeding"),
+        ("video_002", "feeding"),
+        ("video_003", "walking"),
+        ("video_004", "walking"),
+        ("video_005", "resting"),
+        ("video_006", "resting"),
+    ]
 
     annotations = [
         BehaviorAnnotation(
-            annotation_id="ann_001",
-            video_id="video_001",
+            annotation_id=f"annotation_{index:03d}",
+            video_id=video_id,
             track_id=1,
             start_frame=0,
-            end_frame=15,
-            behavior_id="feeding",
-        ),
-        BehaviorAnnotation(
-            annotation_id="ann_002",
-            video_id="video_002",
-            track_id=1,
-            start_frame=0,
-            end_frame=15,
-            behavior_id="feeding",
-        ),
-        BehaviorAnnotation(
-            annotation_id="ann_003",
-            video_id="video_003",
-            track_id=1,
-            start_frame=0,
-            end_frame=15,
-            behavior_id="walking",
-        ),
+            end_frame=FRAMES_PER_VIDEO - 1,
+            behavior_id=behavior_id,
+        )
+        for index, (video_id, behavior_id)
+        in enumerate(group_specs, start=1)
     ]
 
     annotation_set = AnnotationSet(
@@ -173,39 +144,100 @@ def _make_annotations() -> AnnotationSet:
     return annotation_set
 
 
+def _assert_group_disjoint(
+    first: set[str],
+    second: set[str],
+) -> None:
+    """Assert that two split group sets do not overlap."""
+
+    assert first.isdisjoint(second)
+
+
+def test_synthetic_fixture_structure() -> None:
+    """Verify the synthetic dataset before running the full pipeline."""
+
+    samples = _make_synthetic_samples()
+
+    assert len(samples) == 6 * FRAMES_PER_VIDEO
+
+    video_ids = {
+        sample.metadata["video_id"]
+        for sample in samples
+    }
+
+    assert video_ids == {
+        "video_001",
+        "video_002",
+        "video_003",
+        "video_004",
+        "video_005",
+        "video_006",
+    }
+
+    behavior_ids = {
+        sample.behavior_id
+        for sample in samples
+    }
+
+    assert behavior_ids == {
+        "feeding",
+        "walking",
+        "resting",
+    }
+
+    for behavior_id in {
+        "feeding",
+        "walking",
+        "resting",
+    }:
+        behavior_videos = {
+            sample.metadata["video_id"]
+            for sample in samples
+            if sample.behavior_id == behavior_id
+        }
+
+        assert len(behavior_videos) == 2
+
+
+def test_annotation_fixture_structure() -> None:
+    """Verify that every synthetic video has one valid annotation."""
+
+    annotation_set = _make_annotations()
+
+    assert len(annotation_set.annotations) == 6
+
+    video_ids = {
+        annotation.video_id
+        for annotation in annotation_set.annotations
+    }
+
+    assert len(video_ids) == 6
+
+    for annotation in annotation_set.annotations:
+        assert annotation.start_frame == 0
+        assert annotation.end_frame == FRAMES_PER_VIDEO - 1
+        assert annotation.track_id == 1
+
+
 def test_temporal_experiment_end_to_end(
     tmp_path: Path,
 ) -> None:
     """
-    End-to-end smoke test for temporal behavior recognition.
+    End-to-end smoke test.
 
-    The test verifies:
-
-    1. Annotation alignment.
-    2. Group-aware splitting.
-    3. Train-only label mapping.
-    4. Temporal sequence construction.
-    5. PyG dataset creation.
-    6. Model construction.
-    7. Training.
-    8. Best-checkpoint creation/restoration.
-    9. Test evaluation.
-    10. Prediction records.
-    11. Experiment result metadata.
+    This test validates pipeline integrity rather than scientific model
+    performance.
     """
 
-    graph_samples = _make_synthetic_samples(
-        frames_per_group=16,
-    )
-
+    graph_samples = _make_synthetic_samples()
     annotation_set = _make_annotations()
 
     config = TemporalExperimentConfig(
         sequence_length=4,
         sequence_stride=4,
-        train_ratio=1 / 3,
-        validation_ratio=1 / 3,
-        test_ratio=1 / 3,
+        train_ratio=0.50,
+        validation_ratio=0.25,
+        test_ratio=0.25,
         group_key="video_id",
         split_seed=42,
         batch_size=2,
@@ -225,7 +257,7 @@ def test_temporal_experiment_end_to_end(
     )
 
     # ---------------------------------------------------------------
-    # Prepare data.
+    # 1. Alignment + group split + temporal dataset creation.
     # ---------------------------------------------------------------
     data = experiment.prepare_data(
         graph_samples=graph_samples,
@@ -243,7 +275,7 @@ def test_temporal_experiment_end_to_end(
     assert len(data.test_temporal) > 0
 
     # ---------------------------------------------------------------
-    # Verify group isolation.
+    # 2. Verify group isolation.
     # ---------------------------------------------------------------
     train_groups = set(
         data.split_result.train_groups
@@ -257,20 +289,69 @@ def test_temporal_experiment_end_to_end(
         data.split_result.test_groups
     )
 
-    assert train_groups.isdisjoint(validation_groups)
-    assert train_groups.isdisjoint(test_groups)
-    assert validation_groups.isdisjoint(test_groups)
+    _assert_group_disjoint(
+        train_groups,
+        validation_groups,
+    )
+
+    _assert_group_disjoint(
+        train_groups,
+        test_groups,
+    )
+
+    _assert_group_disjoint(
+        validation_groups,
+        test_groups,
+    )
+
+    # Every original video must belong to exactly one split.
+    all_groups = (
+        train_groups
+        | validation_groups
+        | test_groups
+    )
+
+    assert all_groups == {
+        "video_001",
+        "video_002",
+        "video_003",
+        "video_004",
+        "video_005",
+        "video_006",
+    }
 
     # ---------------------------------------------------------------
-    # Infer dimensions from actual dataset.
+    # 3. The training label mapping must contain every class used
+    #    by validation and test.
+    #
+    #    This is a smoke-test property. The actual research dataset
+    #    should be checked explicitly before training.
+    # ---------------------------------------------------------------
+    expected_behaviors = {
+        "feeding",
+        "walking",
+        "resting",
+    }
+
+    assert set(data.label_mapping) == expected_behaviors
+
+    # ---------------------------------------------------------------
+    # 4. Verify graph dimensions.
     # ---------------------------------------------------------------
     dimensions = experiment.model_dimensions
 
-    assert dimensions["node_feature_dim"] == 4
-    assert dimensions["edge_feature_dim"] == 1
+    assert (
+        dimensions["node_feature_dim"]
+        == NODE_FEATURE_DIM
+    )
+
+    assert (
+        dimensions["edge_feature_dim"]
+        == EDGE_FEATURE_DIM
+    )
 
     # ---------------------------------------------------------------
-    # Build model from inferred dimensions.
+    # 5. Build the temporal model.
     # ---------------------------------------------------------------
     model_config = TemporalModelConfig(
         node_feature_dim=dimensions["node_feature_dim"],
@@ -297,54 +378,73 @@ def test_temporal_experiment_end_to_end(
     assert experiment.model is model
 
     # ---------------------------------------------------------------
-    # Train and evaluate.
+    # 6. Train and evaluate.
     # ---------------------------------------------------------------
     result = experiment.train_and_evaluate(
         data=data,
     )
 
+    # ---------------------------------------------------------------
+    # 7. Validate experiment result.
+    # ---------------------------------------------------------------
     assert result.history
     assert result.test_metrics
-    assert result.label_mapping == data.label_mapping
 
-    assert result.train_size == len(
-        data.train_samples
+    assert (
+        result.label_mapping
+        == data.label_mapping
     )
 
-    assert result.validation_size == len(
-        data.validation_samples
+    assert (
+        result.train_size
+        == len(data.train_samples)
     )
 
-    assert result.test_size == len(
-        data.test_samples
+    assert (
+        result.validation_size
+        == len(data.validation_samples)
     )
 
-    assert result.train_temporal_size == len(
-        data.train_temporal
+    assert (
+        result.test_size
+        == len(data.test_samples)
     )
 
-    assert result.validation_temporal_size == len(
-        data.validation_temporal
+    assert (
+        result.train_temporal_size
+        == len(data.train_temporal)
     )
 
-    assert result.test_temporal_size == len(
-        data.test_temporal
+    assert (
+        result.validation_temporal_size
+        == len(data.validation_temporal)
+    )
+
+    assert (
+        result.test_temporal_size
+        == len(data.test_temporal)
     )
 
     # ---------------------------------------------------------------
-    # Verify prediction records are retained.
+    # 8. Verify prediction records.
     # ---------------------------------------------------------------
     assert result.prediction_records is not None
     assert len(result.prediction_records) > 0
 
+    required_prediction_fields = {
+        "sample_id",
+        "true_index",
+        "predicted_index",
+        "confidence",
+    }
+
     for record in result.prediction_records:
-        assert "sample_id" in record
-        assert "true_index" in record
-        assert "predicted_index" in record
-        assert "confidence" in record
+        assert required_prediction_fields.issubset(
+            record.keys()
+        )
 
     # ---------------------------------------------------------------
-    # Verify checkpoint exists.
+    # 9. Verify checkpoint.
     # ---------------------------------------------------------------
     assert result.checkpoint_path is not None
 
@@ -356,66 +456,82 @@ def test_temporal_experiment_end_to_end(
     assert checkpoint_path.is_file()
 
     # ---------------------------------------------------------------
-    # Verify model metadata.
+    # 10. Verify model metadata.
     # ---------------------------------------------------------------
     assert result.model_type is not None
 
     assert result.model_dimensions is not None
+
     assert (
         result.model_dimensions["node_feature_dim"]
-        == 4
+        == NODE_FEATURE_DIM
+    )
+
+    assert (
+        result.model_dimensions["edge_feature_dim"]
+        == EDGE_FEATURE_DIM
     )
 
     # ---------------------------------------------------------------
-    # Verify split groups are persisted in the result.
+    # 11. Verify split metadata is returned.
     # ---------------------------------------------------------------
     assert result.split_groups is not None
 
-    assert set(
+    result_train = set(
         result.split_groups["train"]
-    ).isdisjoint(
+    )
+
+    result_validation = set(
         result.split_groups["validation"]
     )
 
-    assert set(
-        result.split_groups["train"]
-    ).isdisjoint(
+    result_test = set(
         result.split_groups["test"]
     )
 
-    assert set(
-        result.split_groups["validation"]
-    ).isdisjoint(
-        result.split_groups["test"]
+    _assert_group_disjoint(
+        result_train,
+        result_validation,
+    )
+
+    _assert_group_disjoint(
+        result_train,
+        result_test,
+    )
+
+    _assert_group_disjoint(
+        result_validation,
+        result_test,
     )
 
 
-def test_synthetic_samples_have_expected_structure() -> None:
-    """Verify the synthetic fixture before running the full pipeline."""
+def test_temporal_experiment_requires_prepared_data(
+    tmp_path: Path,
+) -> None:
+    """Verify that training cannot start before data preparation."""
 
-    samples = _make_synthetic_samples(
-        frames_per_group=16,
+    config = TemporalExperimentConfig(
+        sequence_length=4,
+        sequence_stride=4,
+        epochs=1,
+        device="cpu",
+        checkpoint_dir=str(
+            tmp_path / "checkpoints"
+        ),
     )
 
-    assert len(samples) == 48
+    experiment = TemporalExperiment(
+        model_config=None,
+        config=config,
+    )
 
-    video_ids = {
-        sample.metadata["video_id"]
-        for sample in samples
-    }
+    assert experiment.model is None
 
-    assert video_ids == {
-        "video_001",
-        "video_002",
-        "video_003",
-    }
-
-    behavior_ids = {
-        sample.behavior_id
-        for sample in samples
-    }
-
-    assert behavior_ids == {
-        "feeding",
-        "walking",
-    }
+    try:
+        experiment.train_and_evaluate()
+    except RuntimeError as exc:
+        assert "model" in str(exc).lower()
+    else:
+        raise AssertionError(
+            "Expected RuntimeError before model construction."
+        )
