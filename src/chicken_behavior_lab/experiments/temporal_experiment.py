@@ -1,19 +1,18 @@
-# src/chicken_behavior_lab/experiments/temporal_experiment.py
 
-"""End-to-end experiment orchestration for temporal skeleton-graph learning."""
+"""End-to-end experiment orchestration for temporal skeleton-graph behavior recognition."""
 
 from __future__ import annotations
 
-import random
+import json
+import time
+import traceback
 from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-import numpy as np
 import torch
 from torch import nn
-from torch.utils.data import DataLoader
 
 from chicken_behavior_lab.alignment.annotation_graph_aligner import (
     AnnotationGraphAligner,
@@ -21,12 +20,15 @@ from chicken_behavior_lab.alignment.annotation_graph_aligner import (
 from chicken_behavior_lab.annotations.schema import AnnotationSet
 from chicken_behavior_lab.dataset.preflight import validate_class_coverage
 from chicken_behavior_lab.dataset.split_diagnostics import (
-    SplitDiagnosticsReport,
     inspect_split_quality,
 )
 from chicken_behavior_lab.dataset.group_split import GroupAwareSplitter
-from chicken_behavior_lab.dataset.temporal_builder import TemporalSequenceBuilder
-from chicken_behavior_lab.dataset.temporal_pyg_dataset import TemporalPyGDataset
+from chicken_behavior_lab.dataset.temporal_builder import (
+    TemporalSequenceBuilder,
+)
+from chicken_behavior_lab.dataset.temporal_pyg_dataset import (
+    TemporalPyGDataset,
+)
 from chicken_behavior_lab.dataset.temporal_collate import (
     make_temporal_dataloader,
 )
@@ -34,8 +36,11 @@ from chicken_behavior_lab.experiments.manifest import (
     ExperimentManifest,
     set_reproducibility_seed,
 )
+from chicken_behavior_lab.io.experiment_io import ExperimentOutputWriter
 from chicken_behavior_lab.io.manifest_io import ExperimentManifestIO
-from chicken_behavior_lab.training.temporal_evaluator import TemporalEvaluator
+from chicken_behavior_lab.training.temporal_evaluator import (
+    TemporalEvaluator,
+)
 from chicken_behavior_lab.training.trainer_factory import build_trainer
 
 
@@ -46,7 +51,7 @@ from chicken_behavior_lab.training.trainer_factory import build_trainer
 
 @dataclass(slots=True)
 class TemporalExperimentConfig:
-    """Configuration for data preparation, training, and evaluation."""
+    """Configuration for a reproducible temporal behavior experiment."""
 
     sequence_length: int = 16
     sequence_stride: int = 4
@@ -70,8 +75,7 @@ class TemporalExperimentConfig:
     checkpoint_dir: str = "checkpoints/temporal"
 
     def validate(self) -> None:
-        """Validate experiment parameters before processing data."""
-
+        """Validate configuration values before data preparation or training."""
         if self.sequence_length < 1:
             raise ValueError("sequence_length must be >= 1.")
 
@@ -87,17 +91,19 @@ class TemporalExperimentConfig:
         if any(ratio <= 0.0 or ratio >= 1.0 for ratio in ratios):
             raise ValueError("All split ratios must be between 0 and 1.")
 
-        if not np.isclose(sum(ratios), 1.0, atol=1e-8):
+        if abs(sum(ratios) - 1.0) > 1e-6:
             raise ValueError("Split ratios must sum to 1.0.")
 
         if self.group_key not in {"video_id", "track_id"}:
-            raise ValueError("group_key must be 'video_id' or 'track_id'.")
+            raise ValueError(
+                "group_key must be either 'video_id' or 'track_id'."
+            )
 
         if self.batch_size < 1:
             raise ValueError("batch_size must be >= 1.")
 
         if self.num_workers < 0:
-            raise ValueError("num_workers must be >= 0.")
+            raise ValueError("num_workers cannot be negative.")
 
         if self.epochs < 1:
             raise ValueError("epochs must be >= 1.")
@@ -113,13 +119,13 @@ class TemporalExperimentConfig:
 
 
 # ---------------------------------------------------------------------------
-# Prepared data and experiment results
+# Experiment data and result objects
 # ---------------------------------------------------------------------------
 
 
 @dataclass(slots=True)
 class TemporalExperimentData:
-    """Prepared sample splits and temporal datasets."""
+    """Prepared samples, split diagnostics, mappings, and PyG datasets."""
 
     train_samples: list[Any]
     validation_samples: list[Any]
@@ -127,9 +133,9 @@ class TemporalExperimentData:
 
     label_mapping: dict[str, int]
 
-    train_temporal: list[Any]
-    validation_temporal: list[Any]
-    test_temporal: list[Any]
+    train_temporal_samples: list[Any]
+    validation_temporal_samples: list[Any]
+    test_temporal_samples: list[Any]
 
     train_dataset: TemporalPyGDataset
     validation_dataset: TemporalPyGDataset
@@ -137,32 +143,33 @@ class TemporalExperimentData:
 
     alignment_result: Any
     split_result: Any
-    split_diagnostics: SplitDiagnosticsReport
+    split_diagnostics: Any
 
 
 @dataclass(slots=True)
 class TemporalExperimentResult:
-    """Serializable summary of a completed experiment."""
+    """Summary of training and held-out test evaluation."""
 
     history: Any
-    test_metrics: dict[str, Any]
+    test_metrics: Any
     label_mapping: dict[str, int]
 
-    train_size: int
-    validation_size: int
-    test_size: int
+    num_train_samples: int
+    num_validation_samples: int
+    num_test_samples: int
 
-    train_temporal_size: int
-    validation_temporal_size: int
-    test_temporal_size: int
+    num_train_sequences: int
+    num_validation_sequences: int
+    num_test_sequences: int
 
     checkpoint_path: str | None
+    model_type: str
 
-    model_type: str | None = None
-    model_dimensions: dict[str, Any] | None = None
-    split_groups: dict[str, list[str]] | None = None
-    split_diagnostics: dict[str, Any] | None = None
-    prediction_records: list[dict[str, Any]] | None = None
+    model_dimensions: dict[str, Any]
+    split_groups: dict[str, list[str]]
+    split_diagnostics: dict[str, Any]
+
+    prediction_records: list[dict[str, Any]] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +178,18 @@ class TemporalExperimentResult:
 
 
 def _to_serializable(value: Any) -> Any:
-    """Convert common Python, NumPy, and PyTorch objects to JSON-compatible data."""
+    """Convert common Python and PyTorch objects to JSON-compatible values."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+
+    if isinstance(value, Path):
+        return str(value)
+
+    if isinstance(value, torch.device):
+        return str(value)
+
+    if isinstance(value, torch.Tensor):
+        return value.detach().cpu().tolist()
 
     if is_dataclass(value) and not isinstance(value, type):
         return _to_serializable(asdict(value))
@@ -182,29 +200,8 @@ def _to_serializable(value: Any) -> Any:
             for key, item in value.items()
         }
 
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, (list, tuple, set)):
         return [_to_serializable(item) for item in value]
-
-    if isinstance(value, set):
-        return sorted(_to_serializable(item) for item in value)
-
-    if isinstance(value, Path):
-        return str(value)
-
-    if isinstance(value, np.ndarray):
-        return value.tolist()
-
-    if isinstance(value, np.generic):
-        return value.item()
-
-    if isinstance(value, torch.Tensor):
-        return value.detach().cpu().tolist()
-
-    if isinstance(value, datetime):
-        return value.isoformat()
-
-    if isinstance(value, (str, int, float, bool)) or value is None:
-        return value
 
     if hasattr(value, "to_dict") and callable(value.to_dict):
         return _to_serializable(value.to_dict())
@@ -216,23 +213,96 @@ def _to_serializable(value: Any) -> Any:
 
 
 def _config_to_dict(config: Any) -> dict[str, Any]:
-    """Convert a dataclass or mapping configuration into a dictionary."""
-
+    """Convert a configuration object to a dictionary."""
     if is_dataclass(config) and not isinstance(config, type):
-        result = asdict(config)
-    elif isinstance(config, Mapping):
-        result = dict(config)
-    elif hasattr(config, "to_dict") and callable(config.to_dict):
-        result = config.to_dict()
-    elif hasattr(config, "__dict__"):
-        result = vars(config)
-    else:
-        raise TypeError(
-            "Configuration must be a dataclass, mapping, or object "
-            "with a serializable dictionary representation."
-        )
+        return _to_serializable(asdict(config))
 
-    return _to_serializable(result)
+    if isinstance(config, Mapping):
+        return _to_serializable(dict(config))
+
+    if hasattr(config, "to_dict") and callable(config.to_dict):
+        return _to_serializable(config.to_dict())
+
+    if hasattr(config, "__dict__"):
+        return _to_serializable(vars(config))
+
+    raise TypeError(
+        "Configuration must be a dataclass, mapping, or object "
+        "with a to_dict() method."
+    )
+
+
+def _utc_now() -> str:
+    """Return a timezone-aware UTC timestamp."""
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _sample_ids(samples: Sequence[Any]) -> list[str]:
+    """Extract sample IDs and reject missing or duplicate IDs."""
+    identifiers: list[str] = []
+
+    for sample in samples:
+        sample_id = getattr(sample, "sample_id", None)
+
+        if not isinstance(sample_id, str) or not sample_id.strip():
+            raise ValueError("Every sample must have a non-empty sample_id.")
+
+        identifiers.append(sample_id)
+
+    if len(identifiers) != len(set(identifiers)):
+        raise ValueError("Duplicate sample IDs were found within a split.")
+
+    return identifiers
+
+
+def _group_ids(samples: Sequence[Any], group_key: str) -> list[str]:
+    """Extract unique split-group identifiers from sample metadata."""
+    groups: set[str] = set()
+
+    for sample in samples:
+        metadata = getattr(sample, "metadata", None) or {}
+
+        if group_key == "video_id":
+            group_id = metadata.get("video_id")
+        elif group_key == "track_id":
+            track_id = metadata.get("track_id")
+            video_id = metadata.get("video_id")
+
+            if track_id is None:
+                group_id = None
+            elif video_id is not None:
+                group_id = f"{video_id}::track::{track_id}"
+            else:
+                group_id = str(track_id)
+        else:
+            raise ValueError(f"Unsupported group_key: {group_key!r}")
+
+        if group_id is None or not str(group_id).strip():
+            raise ValueError(
+                f"Sample {getattr(sample, 'sample_id', '<unknown>')!r} "
+                f"has no usable {group_key!r} in metadata."
+            )
+
+        groups.add(str(group_id))
+
+    return sorted(groups)
+
+
+def _metrics_to_dict(metrics: Any) -> dict[str, Any]:
+    """Normalize an evaluation result or metrics mapping."""
+    if isinstance(metrics, Mapping):
+        return _to_serializable(dict(metrics))
+
+    if hasattr(metrics, "to_dict") and callable(metrics.to_dict):
+        return _to_serializable(metrics.to_dict())
+
+    if is_dataclass(metrics) and not isinstance(metrics, type):
+        return _to_serializable(asdict(metrics))
+
+    if hasattr(metrics, "__dict__"):
+        return _to_serializable(vars(metrics))
+
+    return {"value": _to_serializable(metrics)}
 
 
 # ---------------------------------------------------------------------------
@@ -241,24 +311,30 @@ def _config_to_dict(config: Any) -> dict[str, Any]:
 
 
 class TemporalExperiment:
-    """Prepare temporal skeleton data, train a model, and evaluate its predictions."""
+    """Prepare data, train a temporal model, evaluate it, and save artifacts."""
 
     def __init__(
         self,
-        model_config: Any,
-        config: TemporalExperimentConfig | None = None,
+        config: TemporalExperimentConfig,
+        model: nn.Module | None = None,
+        model_config: Mapping[str, Any] | None = None,
     ) -> None:
-        self.config = config or TemporalExperimentConfig()
+        self.config = config
         self.config.validate()
 
-        self.model_config = model_config
-        self.model: nn.Module | None = None
+        self.model = model
+        self.model_config = (
+            _config_to_dict(model_config)
+            if model_config is not None
+            else None
+        )
+
         self._prepared_data: TemporalExperimentData | None = None
+        self._last_result: TemporalExperimentResult | None = None
 
     @property
     def prepared_data(self) -> TemporalExperimentData:
-        """Return prepared data or raise if preparation has not run."""
-
+        """Return prepared data or raise if prepare_data() has not run."""
         if self._prepared_data is None:
             raise RuntimeError(
                 "Data has not been prepared. Call prepare_data() first."
@@ -268,21 +344,43 @@ class TemporalExperiment:
 
     @property
     def num_classes(self) -> int:
-        """Number of behavior classes in the training-derived mapping."""
-
+        """Number of behavior classes inferred from the training mapping."""
         return len(self.prepared_data.label_mapping)
 
     @property
     def model_dimensions(self) -> dict[str, Any]:
-        """Infer model input dimensions from the prepared training dataset."""
+        """Infer input dimensions from the prepared training dataset."""
+        data = self.prepared_data
 
-        from chicken_behavior_lab.models.factory import (
-            infer_temporal_model_dimensions,
-        )
+        if len(data.train_dataset) == 0:
+            raise RuntimeError("The training dataset is empty.")
 
-        return infer_temporal_model_dimensions(
-            self.prepared_data.train_dataset
-        )
+        item = data.train_dataset[0]
+        x = getattr(item, "x", None)
+        edge_index = getattr(item, "edge_index", None)
+        edge_attr = getattr(item, "edge_attr", None)
+
+        if x is None or x.ndim != 3:
+            raise ValueError(
+                "Expected temporal node features with shape [T, N, F_node]."
+            )
+
+        return {
+            "sequence_length": int(x.shape[0]),
+            "num_nodes": int(x.shape[1]),
+            "node_feature_dim": int(x.shape[2]),
+            "num_edges": (
+                int(edge_index.shape[1])
+                if edge_index is not None
+                else 0
+            ),
+            "edge_feature_dim": (
+                int(edge_attr.shape[-1])
+                if edge_attr is not None
+                else 0
+            ),
+            "num_classes": self.num_classes,
+        }
 
     # ------------------------------------------------------------------
     # Data preparation
@@ -293,37 +391,30 @@ class TemporalExperiment:
         graph_samples: Sequence[Any],
         annotation_set: AnnotationSet,
     ) -> TemporalExperimentData:
-        """Align labels, split by group, then construct temporal windows.
-
-        Splitting occurs before temporal-window generation to prevent
-        overlapping windows from the same group leaking across splits.
-        """
-
+        """Align annotations, split groups, validate splits, and build windows."""
         if not graph_samples:
             raise ValueError("graph_samples cannot be empty.")
 
-        if not isinstance(annotation_set, AnnotationSet):
-            raise TypeError("annotation_set must be an AnnotationSet.")
+        if annotation_set is None:
+            raise ValueError("annotation_set cannot be None.")
 
-        annotation_set.validate()
+        graph_samples = list(graph_samples)
+        _sample_ids(graph_samples)
 
-        # Ensure each preparation starts with reproducible split randomness.
-        random.seed(self.config.split_seed)
-        np.random.seed(self.config.split_seed)
-
+        # 1. Align graph samples with behavior annotations.
         aligner = AnnotationGraphAligner(strict_conflicts=True)
-        alignment_result = aligner.align(
-            graph_samples=list(graph_samples),
-            annotation_set=annotation_set,
-        )
+        alignment_result = aligner.align(graph_samples, annotation_set)
 
         labeled_samples = list(alignment_result.labeled_samples)
 
         if not labeled_samples:
             raise ValueError(
-                "No graph samples could be aligned with behavior annotations."
+                "Annotation alignment produced no labeled graph samples."
             )
 
+        _sample_ids(labeled_samples)
+
+        # 2. Split labeled samples by group before creating temporal windows.
         splitter = GroupAwareSplitter(
             train_ratio=self.config.train_ratio,
             validation_ratio=self.config.validation_ratio,
@@ -331,7 +422,6 @@ class TemporalExperiment:
             group_key=self.config.group_key,
             seed=self.config.split_seed,
         )
-
         split_result = splitter.split(labeled_samples)
 
         train_samples = list(split_result.train)
@@ -340,38 +430,59 @@ class TemporalExperiment:
 
         if not train_samples or not validation_samples or not test_samples:
             raise ValueError(
-                "Group-aware splitting produced an empty split. "
-                "Add more independent groups or adjust the split ratios."
+                "Group-aware splitting must produce non-empty train, "
+                "validation, and test splits."
             )
 
-        # Check for group leakage, duplicate IDs, and class coverage.
-        diagnostics = inspect_split_quality(
-            train_samples=train_samples,
-            validation_samples=validation_samples,
-            test_samples=test_samples,
+        # 3. Diagnose leakage and sample-ID collisions before class checks.
+        split_diagnostics = inspect_split_quality(
+            train_samples,
+            validation_samples,
+            test_samples,
             group_key=self.config.group_key,
         )
 
-        if diagnostics.has_group_leakage:
+        if split_diagnostics.has_group_leakage:
             raise ValueError(
-                "Group leakage detected across splits: "
-                f"{diagnostics.group_overlaps}"
+                "Group leakage detected between dataset splits: "
+                f"{_to_serializable(split_diagnostics.to_dict())}"
             )
 
-        if diagnostics.duplicate_sample_ids:
-            raise ValueError(
-                "Duplicate sample IDs detected across splits: "
-                f"{diagnostics.duplicate_sample_ids}"
-            )
+        if getattr(split_diagnostics, "duplicate_sample_ids", None):
+            duplicates = split_diagnostics.duplicate_sample_ids
+            if duplicates:
+                raise ValueError(
+                    f"Duplicate sample IDs detected across splits: {duplicates}"
+                )
 
+        # Explicitly check IDs across splits as a second guard.
+        split_ids = {
+            "train": set(_sample_ids(train_samples)),
+            "validation": set(_sample_ids(validation_samples)),
+            "test": set(_sample_ids(test_samples)),
+        }
+
+        if split_ids["train"] & split_ids["validation"]:
+            raise ValueError("Sample-ID leakage between train and validation.")
+
+        if split_ids["train"] & split_ids["test"]:
+            raise ValueError("Sample-ID leakage between train and test.")
+
+        if split_ids["validation"] & split_ids["test"]:
+            raise ValueError("Sample-ID leakage between validation and test.")
+
+        # 4. Ensure all evaluation classes are represented in training.
         validate_class_coverage(
             train_samples,
             validation_samples,
             test_samples,
         )
 
-        # Build the canonical mapping from training samples only.
+        # 5. Build the canonical label mapping from training data only.
         label_mapping = aligner.build_label_mapping(train_samples)
+
+        if not label_mapping:
+            raise ValueError("No behavior classes were found in training data.")
 
         train_samples = aligner.apply_label_mapping(
             train_samples,
@@ -386,45 +497,45 @@ class TemporalExperiment:
             label_mapping,
         )
 
-        # Temporal windows are constructed only after group splitting.
-        sequence_builder = TemporalSequenceBuilder(
+        # 6. Create temporal windows independently within each split.
+        builder = TemporalSequenceBuilder(
             sequence_length=self.config.sequence_length,
             stride=self.config.sequence_stride,
         )
 
-        train_temporal = list(sequence_builder.build(train_samples))
-        validation_temporal = list(sequence_builder.build(validation_samples))
-        test_temporal = list(sequence_builder.build(test_samples))
+        train_temporal_samples = list(builder.build(train_samples))
+        validation_temporal_samples = list(builder.build(validation_samples))
+        test_temporal_samples = list(builder.build(test_samples))
 
-        if not train_temporal:
+        if not train_temporal_samples:
             raise ValueError(
-                "No training sequences were created. Check sequence_length "
-                "and the number of graphs per track."
+                "No training temporal windows were generated. "
+                "Check sequence_length and the number of samples per track."
             )
 
-        if not validation_temporal:
+        if not validation_temporal_samples:
             raise ValueError(
-                "No validation sequences were created. Check sequence_length "
-                "and the number of graphs per track."
+                "No validation temporal windows were generated. "
+                "Check sequence_length and the number of samples per track."
             )
 
-        if not test_temporal:
+        if not test_temporal_samples:
             raise ValueError(
-                "No test sequences were created. Check sequence_length "
-                "and the number of graphs per track."
+                "No test temporal windows were generated. "
+                "Check sequence_length and the number of samples per track."
             )
 
-        # Use the same behavior-to-index mapping for every split.
+        # 7. Convert temporal samples to PyTorch Geometric datasets.
         train_dataset = TemporalPyGDataset(
-            train_temporal,
+            train_temporal_samples,
             label_to_index=label_mapping,
         )
         validation_dataset = TemporalPyGDataset(
-            validation_temporal,
+            validation_temporal_samples,
             label_to_index=label_mapping,
         )
         test_dataset = TemporalPyGDataset(
-            test_temporal,
+            test_temporal_samples,
             label_to_index=label_mapping,
         )
 
@@ -432,70 +543,73 @@ class TemporalExperiment:
             train_samples=train_samples,
             validation_samples=validation_samples,
             test_samples=test_samples,
-            label_mapping=label_mapping,
-            train_temporal=train_temporal,
-            validation_temporal=validation_temporal,
-            test_temporal=test_temporal,
+            label_mapping=dict(label_mapping),
+            train_temporal_samples=train_temporal_samples,
+            validation_temporal_samples=validation_temporal_samples,
+            test_temporal_samples=test_temporal_samples,
             train_dataset=train_dataset,
             validation_dataset=validation_dataset,
             test_dataset=test_dataset,
             alignment_result=alignment_result,
             split_result=split_result,
-            split_diagnostics=diagnostics,
+            split_diagnostics=split_diagnostics,
         )
 
         self._prepared_data = prepared
+        self._last_result = None
+
         return prepared
 
     # ------------------------------------------------------------------
-    # Model configuration
+    # Model and data loaders
     # ------------------------------------------------------------------
 
     def build_model(self, model: nn.Module) -> nn.Module:
-        """Attach a constructed model and validate its classifier output size."""
-
+        """Attach a model and check its classifier output dimension."""
         if not isinstance(model, nn.Module):
             raise TypeError("model must be a torch.nn.Module.")
 
-        classifier = getattr(model, "classifier", None)
-
-        if classifier is None:
-            raise ValueError(
-                "The model must expose a 'classifier' module so its output "
-                "dimension can be validated."
+        if self._prepared_data is None:
+            raise RuntimeError(
+                "Call prepare_data() before attaching the experiment model."
             )
 
         linear_layers = [
             layer
-            for layer in classifier.modules()
+            for layer in model.modules()
             if isinstance(layer, nn.Linear)
         ]
 
         if not linear_layers:
             raise ValueError(
-                "The model classifier must contain at least one nn.Linear layer."
+                "The supplied model has no nn.Linear classifier layer."
             )
 
-        output_classes = linear_layers[-1].out_features
+        output_features = linear_layers[-1].out_features
 
-        if output_classes != self.num_classes:
+        if output_features != self.num_classes:
             raise ValueError(
-                f"Model outputs {output_classes} classes, but the prepared "
-                f"dataset contains {self.num_classes} classes."
+                "Model output dimension does not match the number of "
+                f"behavior classes: model={output_features}, "
+                f"classes={self.num_classes}."
             )
 
         self.model = model
+
+        if self.model_config is None:
+            self.model_config = {
+                "model_class": (
+                    f"{model.__class__.__module__}."
+                    f"{model.__class__.__qualname__}"
+                ),
+                "num_classes": self.num_classes,
+            }
+
         return model
 
-    # ------------------------------------------------------------------
-    # Data loaders
-    # ------------------------------------------------------------------
-
-    def _build_loaders(
-        self,
-        data: TemporalExperimentData,
-    ) -> tuple[DataLoader, DataLoader, DataLoader]:
-        """Create train, validation, and test loaders."""
+    def _build_loaders(self) -> tuple[Any, Any, Any]:
+        """Create data loaders for the three prepared datasets."""
+        data = self.prepared_data
 
         train_loader = make_temporal_dataloader(
             data.train_dataset,
@@ -528,50 +642,47 @@ class TemporalExperiment:
         self,
         data: TemporalExperimentData | None = None,
     ) -> TemporalExperimentResult:
-        """Train using train/validation data and evaluate once on the test set."""
+        """Train the model and evaluate it once on the held-out test split."""
+        if data is not None:
+            self._prepared_data = data
+
+        prepared = self.prepared_data
 
         if self.model is None:
             raise RuntimeError(
-                "No model has been attached. Construct a model and call "
-                "build_model(model) before training."
-            )
-
-        if data is None:
-            data = self.prepared_data
-        elif self._prepared_data is not data:
-            raise ValueError(
-                "The supplied data object is not the one prepared by this "
-                "TemporalExperiment instance."
+                "No model is attached. Call build_model(model) first."
             )
 
         set_reproducibility_seed(self.config.training_seed)
 
-        device = torch.device(self.config.device)
-
-        if device.type == "cuda" and not torch.cuda.is_available():
+        if self.config.device.startswith("cuda") and not torch.cuda.is_available():
             raise RuntimeError(
-                "CUDA was requested, but CUDA is not available in this environment."
+                f"Requested device {self.config.device!r}, "
+                "but CUDA is not available."
             )
 
+        device = torch.device(self.config.device)
         self.model.to(device)
 
-        train_loader, validation_loader, test_loader = self._build_loaders(data)
+        train_loader, validation_loader, test_loader = self._build_loaders()
 
         optimizer = torch.optim.AdamW(
             self.model.parameters(),
             lr=self.config.learning_rate,
             weight_decay=self.config.weight_decay,
         )
-
         criterion = nn.CrossEntropyLoss()
+
+        checkpoint_dir = Path(self.config.checkpoint_dir)
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
         trainer = build_trainer(
             model=self.model,
             optimizer=optimizer,
             criterion=criterion,
             device=device,
-            label_mapping=data.label_mapping,
-            checkpoint_dir=self.config.checkpoint_dir,
+            label_mapping=prepared.label_mapping,
+            checkpoint_dir=str(checkpoint_dir),
         )
 
         history = trainer.fit(
@@ -580,242 +691,354 @@ class TemporalExperiment:
             epochs=self.config.epochs,
         )
 
-        # Restore the best checkpoint before final test evaluation when one exists.
+        # Restore the best available checkpoint before test evaluation.
         checkpoint_path: str | None = None
-        manager = getattr(trainer, "checkpoint_manager", None)
+        checkpoint_manager = getattr(trainer, "checkpoint_manager", None)
+        candidate_path = getattr(
+            checkpoint_manager,
+            "checkpoint_path",
+            None,
+        )
 
-        if manager is not None:
-            candidate = getattr(manager, "checkpoint_path", None)
+        if candidate_path is not None:
+            candidate = Path(candidate_path)
 
-            if candidate is not None:
-                candidate_path = Path(candidate)
+            if candidate.exists():
+                trainer.load_checkpoint(str(candidate))
+                checkpoint_path = str(candidate)
 
-                if candidate_path.exists():
-                    trainer.load_checkpoint(candidate_path)
-                    checkpoint_path = str(candidate_path)
-
-        index_to_label = {
-            index: behavior
-            for behavior, index in data.label_mapping.items()
-        }
-
+        # Evaluate only after training and optional best-checkpoint restoration.
         evaluator = TemporalEvaluator(
             model=self.model,
             device=device,
-            index_to_label=index_to_label,
+            index_to_label={
+                index: label
+                for label, index in prepared.label_mapping.items()
+            },
         )
+        evaluation_result = evaluator.evaluate(test_loader)
 
-        evaluation = evaluator.evaluate(test_loader)
-
-        metrics = _to_serializable(evaluation.metrics)
-        predictions = _to_serializable(
-            getattr(evaluation, "prediction_records", [])
+        metrics = getattr(
+            evaluation_result,
+            "metrics",
+            evaluation_result,
+        )
+        prediction_records = getattr(
+            evaluation_result,
+            "prediction_records",
+            [],
         )
 
         split_groups = {
-            "train": list(getattr(data.split_result, "train_groups", [])),
-            "validation": list(
-                getattr(data.split_result, "validation_groups", [])
+            "train": _group_ids(
+                prepared.train_samples,
+                self.config.group_key,
             ),
-            "test": list(getattr(data.split_result, "test_groups", [])),
+            "validation": _group_ids(
+                prepared.validation_samples,
+                self.config.group_key,
+            ),
+            "test": _group_ids(
+                prepared.test_samples,
+                self.config.group_key,
+            ),
         }
 
-        model_type = getattr(
-            self.model,
-            "model_type",
-            self.model.__class__.__name__,
-        )
-
-        return TemporalExperimentResult(
-            history=_to_serializable(history),
+        result = TemporalExperimentResult(
+            history=history,
             test_metrics=metrics,
-            label_mapping=dict(data.label_mapping),
-            train_size=len(data.train_samples),
-            validation_size=len(data.validation_samples),
-            test_size=len(data.test_samples),
-            train_temporal_size=len(data.train_temporal),
-            validation_temporal_size=len(data.validation_temporal),
-            test_temporal_size=len(data.test_temporal),
+            label_mapping=dict(prepared.label_mapping),
+            num_train_samples=len(prepared.train_samples),
+            num_validation_samples=len(prepared.validation_samples),
+            num_test_samples=len(prepared.test_samples),
+            num_train_sequences=len(prepared.train_dataset),
+            num_validation_sequences=len(prepared.validation_dataset),
+            num_test_sequences=len(prepared.test_dataset),
             checkpoint_path=checkpoint_path,
-            model_type=str(model_type),
+            model_type=getattr(
+                self.model,
+                "model_type",
+                self.model.__class__.__name__,
+            ),
             model_dimensions=self.model_dimensions,
             split_groups=split_groups,
-            split_diagnostics=data.split_diagnostics.to_dict(),
-            prediction_records=predictions,
+            split_diagnostics=_to_serializable(
+                prepared.split_diagnostics.to_dict()
+            ),
+            prediction_records=_to_serializable(prediction_records),
         )
 
+        self._last_result = result
+        return result
+
     # ------------------------------------------------------------------
-    # Manifest support
+    # Experiment manifest
     # ------------------------------------------------------------------
 
     def create_manifest(
         self,
         experiment_name: str,
-        extra_metadata: dict[str, Any] | None = None,
+        extra_metadata: Mapping[str, Any] | None = None,
     ) -> ExperimentManifest:
-        """Create a reproducibility manifest from the prepared data."""
-
+        """Create a reproducibility manifest for the prepared experiment."""
         data = self.prepared_data
 
-        split_groups = {
-            "train": list(getattr(data.split_result, "train_groups", [])),
-            "validation": list(
-                getattr(data.split_result, "validation_groups", [])
-            ),
-            "test": list(getattr(data.split_result, "test_groups", [])),
-        }
+        if self.model_config is None:
+            raise RuntimeError(
+                "model_config is not set. Attach a model first or provide "
+                "model_config to TemporalExperiment."
+            )
 
-        metadata = dict(extra_metadata or {})
-        metadata.setdefault("training_seed", self.config.training_seed)
-        metadata.setdefault("group_key", self.config.group_key)
+        split_group_ids = {
+            "train": _group_ids(data.train_samples, self.config.group_key),
+            "validation": _group_ids(
+                data.validation_samples,
+                self.config.group_key,
+            ),
+            "test": _group_ids(data.test_samples, self.config.group_key),
+        }
 
         return ExperimentManifest.create(
             experiment_name=experiment_name,
-            experiment_config=self.config,
+            experiment_config=_config_to_dict(self.config),
             model_config=self.model_config,
             label_mapping=data.label_mapping,
             train_samples=data.train_samples,
             validation_samples=data.validation_samples,
             test_samples=data.test_samples,
-            split_diagnostics=data.split_diagnostics.to_dict(),
-            split_group_ids=split_groups,
-            seed=self.config.split_seed,
-            extra_metadata=metadata,
+            split_diagnostics=_to_serializable(
+                data.split_diagnostics.to_dict()
+            ),
+            split_group_ids=split_group_ids,
+            seed=self.config.training_seed,
+            extra_metadata=_to_serializable(
+                dict(extra_metadata or {})
+            ),
         )
 
     def save_manifest(
         self,
+        manifest: ExperimentManifest,
         experiment_dir: str | Path,
-        experiment_name: str,
-        extra_metadata: dict[str, Any] | None = None,
     ) -> Path:
-        """Persist the reproducibility manifest in an experiment directory."""
-
-        manifest = self.create_manifest(
-            experiment_name=experiment_name,
-            extra_metadata=extra_metadata,
-        )
+        """Persist the manifest using the atomic manifest writer."""
+        destination = Path(experiment_dir)
+        destination.mkdir(parents=True, exist_ok=True)
 
         return ExperimentManifestIO().save(
             manifest,
-            Path(experiment_dir),
+            destination,
         )
 
     # ------------------------------------------------------------------
-    # End-to-end run with persisted outputs
+    # Complete run with output and lifecycle tracking
     # ------------------------------------------------------------------
 
     def run_and_save(
         self,
-        experiment_name: str = "temporal_baseline",
+        experiment_name: str,
+        graph_samples: Sequence[Any] | None = None,
+        annotation_set: AnnotationSet | None = None,
         output_root: str | Path = "results/experiments",
-        extra_metadata: dict[str, Any] | None = None,
+        extra_metadata: Mapping[str, Any] | None = None,
     ) -> tuple[TemporalExperimentResult, Path]:
-        """Run training and evaluation while saving experiment artifacts.
+        """Run the prepared experiment and save outputs and lifecycle status.
 
-        Expected artifacts include the experiment manifest, configuration,
-        split manifest, training history, test metrics, predictions, and summary.
+        If graph_samples and annotation_set are supplied, prepare the data
+        first. Otherwise, prepare_data() must already have been called.
         """
+        if not experiment_name or not experiment_name.strip():
+            raise ValueError("experiment_name cannot be empty.")
 
-        from chicken_behavior_lab.io.experiment_io import ExperimentOutputWriter
+        if graph_samples is not None or annotation_set is not None:
+            if graph_samples is None or annotation_set is None:
+                raise ValueError(
+                    "graph_samples and annotation_set must be supplied together."
+                )
+
+            self.prepare_data(graph_samples, annotation_set)
 
         data = self.prepared_data
 
         if self.model is None:
             raise RuntimeError(
-                "No model has been attached. Call build_model(model) first."
+                "No model is attached. Call build_model(model) first."
             )
 
-        writer = ExperimentOutputWriter(root=output_root)
-
-        experiment_dir = writer.create_experiment_directory(
-            experiment_name=experiment_name,
+        writer = ExperimentOutputWriter(root=str(output_root))
+        experiment_dir = Path(
+            writer.create_experiment_directory(
+                experiment_name=experiment_name,
+            )
         )
 
-        # Save checkpoints inside the current run directory.
-        checkpoint_dir = experiment_dir / "checkpoints"
-        checkpoint_dir.mkdir(parents=True, exist_ok=True)
-        self.config.checkpoint_dir = str(checkpoint_dir)
+        started_at = _utc_now()
+        started_clock = time.monotonic()
 
-        writer.save_experiment_config(
-            experiment_dir,
-            self.config,
-        )
-        writer.save_model_config(
-            experiment_dir,
-            self.model_config,
-        )
+        status_path = experiment_dir / "run_status.json"
+        error_path = experiment_dir / "error.json"
 
-        split_sample_ids = {
-            "train": [sample.sample_id for sample in data.train_samples],
-            "validation": [
-                sample.sample_id for sample in data.validation_samples
-            ],
-            "test": [sample.sample_id for sample in data.test_samples],
-        }
+        def write_json(path: Path, payload: Mapping[str, Any]) -> None:
+            """Write JSON atomically to avoid leaving partially written files."""
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary_path = path.with_suffix(path.suffix + ".tmp")
 
-        split_group_ids = {
-            "train": list(getattr(data.split_result, "train_groups", [])),
-            "validation": list(
-                getattr(data.split_result, "validation_groups", [])
-            ),
-            "test": list(getattr(data.split_result, "test_groups", [])),
-        }
+            with temporary_path.open("w", encoding="utf-8") as file:
+                json.dump(
+                    _to_serializable(payload),
+                    file,
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                file.flush()
 
-        writer.save_split_manifest(
-            experiment_dir,
-            split_sample_ids,
-            split_group_ids,
-            diagnostics=data.split_diagnostics.to_dict(),
-        )
+            temporary_path.replace(path)
 
-        self.save_manifest(
-            experiment_dir=experiment_dir,
-            experiment_name=experiment_name,
-            extra_metadata=extra_metadata,
-        )
+        def write_status(
+            status: str,
+            error: Mapping[str, Any] | None = None,
+        ) -> None:
+            now = _utc_now()
+            payload: dict[str, Any] = {
+                "experiment_name": experiment_name,
+                "status": status,
+                "started_at_utc": started_at,
+                "updated_at_utc": now,
+                "elapsed_seconds": round(
+                    time.monotonic() - started_clock,
+                    3,
+                ),
+            }
 
-        result = self.train_and_evaluate(data=data)
+            if status in {"completed", "failed"}:
+                payload["finished_at_utc"] = now
 
-        writer.save_training_history(
-            experiment_dir,
-            result.history,
-        )
-        writer.save_test_metrics(
-            experiment_dir,
-            result.test_metrics,
-        )
-        writer.save_prediction_errors(
-            experiment_dir,
-            result.prediction_records or [],
-        )
-        writer.save_all_predictions(
-            experiment_dir,
-            result.prediction_records or [],
-        )
+            if error is not None:
+                payload["error"] = _to_serializable(error)
 
-        summary = {
-            "experiment_name": experiment_name,
-            "status": "completed",
-            "created_at_utc": datetime.now(timezone.utc).isoformat(),
-            "model_type": result.model_type,
-            "model_dimensions": result.model_dimensions,
-            "label_mapping": result.label_mapping,
-            "train_size": result.train_size,
-            "validation_size": result.validation_size,
-            "test_size": result.test_size,
-            "train_temporal_size": result.train_temporal_size,
-            "validation_temporal_size": result.validation_temporal_size,
-            "test_temporal_size": result.test_temporal_size,
-            "checkpoint_path": result.checkpoint_path,
-            "test_metrics": result.test_metrics,
-            "split_diagnostics": result.split_diagnostics,
-            "extra_metadata": extra_metadata or {},
-        }
+            write_json(status_path, payload)
 
-        writer.save_summary(
-            experiment_dir,
-            _to_serializable(summary),
-        )
+        try:
+            # Keep checkpoints inside this experiment's output directory.
+            checkpoint_dir = experiment_dir / "checkpoints"
+            checkpoint_dir.mkdir(parents=True, exist_ok=True)
+            self.config.checkpoint_dir = str(checkpoint_dir)
 
-        return result, experiment_dir
+            write_status("running")
+
+            experiment_config = _config_to_dict(self.config)
+            model_config = self.model_config or {
+                "model_class": (
+                    f"{self.model.__class__.__module__}."
+                    f"{self.model.__class__.__qualname__}"
+                ),
+                "num_classes": len(data.label_mapping),
+            }
+
+            # These calls rely on the ExperimentOutputWriter API in the repo.
+            writer.save_experiment_config(
+                experiment_dir,
+                experiment_config,
+            )
+            writer.save_model_config(
+                experiment_dir,
+                model_config,
+            )
+
+            split_sample_ids = {
+                "train": _sample_ids(data.train_samples),
+                "validation": _sample_ids(data.validation_samples),
+                "test": _sample_ids(data.test_samples),
+            }
+            split_group_ids = {
+                "train": _group_ids(
+                    data.train_samples,
+                    self.config.group_key,
+                ),
+                "validation": _group_ids(
+                    data.validation_samples,
+                    self.config.group_key,
+                ),
+                "test": _group_ids(
+                    data.test_samples,
+                    self.config.group_key,
+                ),
+            }
+
+            writer.save_split_manifest(
+                experiment_dir,
+                split_sample_ids,
+                split_group_ids=split_group_ids,
+                diagnostics=_to_serializable(
+                    data.split_diagnostics.to_dict()
+                ),
+            )
+
+            manifest = self.create_manifest(
+                experiment_name=experiment_name,
+                extra_metadata=extra_metadata,
+            )
+            self.save_manifest(manifest, experiment_dir)
+
+            result = self.train_and_evaluate(data)
+
+            writer.save_training_history(
+                experiment_dir,
+                result.history,
+            )
+            writer.save_test_metrics(
+                experiment_dir,
+                _metrics_to_dict(result.test_metrics),
+            )
+            writer.save_prediction_errors(
+                experiment_dir,
+                result.prediction_records,
+            )
+
+            if hasattr(writer, "save_all_predictions"):
+                writer.save_all_predictions(
+                    experiment_dir,
+                    result.prediction_records,
+                )
+
+            summary = {
+                "experiment_name": experiment_name,
+                "model_type": result.model_type,
+                "label_mapping": result.label_mapping,
+                "num_train_samples": result.num_train_samples,
+                "num_validation_samples": result.num_validation_samples,
+                "num_test_samples": result.num_test_samples,
+                "num_train_sequences": result.num_train_sequences,
+                "num_validation_sequences": result.num_validation_sequences,
+                "num_test_sequences": result.num_test_sequences,
+                "checkpoint_path": result.checkpoint_path,
+                "model_dimensions": result.model_dimensions,
+                "split_groups": result.split_groups,
+                "split_diagnostics": result.split_diagnostics,
+                "test_metrics": _metrics_to_dict(result.test_metrics),
+                "manifest_path": str(
+                    experiment_dir / ExperimentManifestIO.FILENAME
+                ),
+            }
+
+            writer.save_summary(experiment_dir, summary)
+
+            write_status("completed")
+            return result, experiment_dir
+
+        except Exception as exc:
+            error_payload = {
+                "exception_type": type(exc).__name__,
+                "message": str(exc),
+                "traceback": traceback.format_exc(),
+            }
+
+            # Logging must not hide the original training or evaluation error.
+            try:
+                write_json(error_path, error_payload)
+                write_status("failed", error=error_payload)
+            except Exception:
+                pass
+
+            raise
+
