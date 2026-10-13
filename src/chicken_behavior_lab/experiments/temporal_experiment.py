@@ -38,6 +38,11 @@ from chicken_behavior_lab.experiments.manifest import (
 )
 from chicken_behavior_lab.io.experiment_io import ExperimentOutputWriter
 from chicken_behavior_lab.io.manifest_io import ExperimentManifestIO
+from chicken_behavior_lab.models.factory import (
+    TemporalModelConfig,
+    build_temporal_model,
+    infer_temporal_model_dimensions,
+)
 from chicken_behavior_lab.training.temporal_evaluator import (
     TemporalEvaluator,
 )
@@ -273,7 +278,7 @@ def _group_ids(samples: Sequence[Any], group_key: str) -> list[str]:
             elif video_id is not None:
                 group_id = f"{video_id}::track::{track_id}"
             else:
-                group_id = str(track_id)
+                group_id = f"track::{track_id}"
         else:
             raise ValueError(f"Unsupported group_key: {group_key!r}")
 
@@ -420,9 +425,12 @@ class TemporalExperiment:
             validation_ratio=self.config.validation_ratio,
             test_ratio=self.config.test_ratio,
             group_key=self.config.group_key,
+        )
+        split_result = splitter.split(
+            labeled_samples,
             seed=self.config.split_seed,
         )
-        split_result = splitter.split(labeled_samples)
+        split_result.validate()
 
         train_samples = list(split_result.train)
         validation_samples = list(split_result.validation)
@@ -500,7 +508,7 @@ class TemporalExperiment:
         # 6. Create temporal windows independently within each split.
         builder = TemporalSequenceBuilder(
             sequence_length=self.config.sequence_length,
-            stride=self.config.sequence_stride,
+            sequence_stride=self.config.sequence_stride,
         )
 
         train_temporal_samples = list(builder.build(train_samples))
@@ -564,15 +572,106 @@ class TemporalExperiment:
     # Model and data loaders
     # ------------------------------------------------------------------
 
-    def build_model(self, model: nn.Module) -> nn.Module:
-        """Attach a model and check its classifier output dimension."""
-        if not isinstance(model, nn.Module):
-            raise TypeError("model must be a torch.nn.Module.")
-
+    def build_model(
+        self,
+        model: nn.Module | None = None,
+        model_config: TemporalModelConfig | Mapping[str, Any] | None = None,
+    ) -> nn.Module:
+        """Attach a supplied model or construct a temporal GNN from the train data."""
         if self._prepared_data is None:
             raise RuntimeError(
-                "Call prepare_data() before attaching the experiment model."
+                "Call prepare_data() before building the experiment model."
             )
+
+        if model is None:
+            dimensions = infer_temporal_model_dimensions(
+                self.prepared_data.train_dataset
+            )
+
+            if model_config is None:
+                raw_config = self.model_config or {}
+                if isinstance(raw_config, Mapping):
+                    allowed_keys = {
+                        "spatial_hidden_dim",
+                        "temporal_hidden_dim",
+                        "num_gnn_layers",
+                        "num_gru_layers",
+                        "dropout",
+                        "bidirectional_gru",
+                    }
+                    model_kwargs = {
+                        key: value
+                        for key, value in raw_config.items()
+                        if key in allowed_keys
+                    }
+                else:
+                    model_kwargs = {}
+
+                model_config = TemporalModelConfig(
+                    node_feature_dim=dimensions["node_feature_dim"],
+                    edge_feature_dim=dimensions["edge_feature_dim"],
+                    **model_kwargs,
+                )
+            elif isinstance(model_config, Mapping):
+                allowed_keys = {
+                    "spatial_hidden_dim",
+                    "temporal_hidden_dim",
+                    "num_gnn_layers",
+                    "num_gru_layers",
+                    "dropout",
+                    "bidirectional_gru",
+                }
+                model_kwargs = {
+                    key: value
+                    for key, value in model_config.items()
+                    if key in allowed_keys
+                }
+                model_config = TemporalModelConfig(
+                    node_feature_dim=dimensions["node_feature_dim"],
+                    edge_feature_dim=dimensions["edge_feature_dim"],
+                    **model_kwargs,
+                )
+            else:
+                if (
+                    model_config.node_feature_dim
+                    != dimensions["node_feature_dim"]
+                ):
+                    raise ValueError(
+                        "model_config.node_feature_dim does not match the dataset."
+                    )
+                if (
+                    model_config.edge_feature_dim
+                    != dimensions["edge_feature_dim"]
+                ):
+                    raise ValueError(
+                        "model_config.edge_feature_dim does not match the dataset."
+                    )
+
+            model_config.validate()
+            model = build_temporal_model(
+                model_config=model_config,
+                num_classes=self.num_classes,
+            )
+            self.model_config = {
+                **asdict(model_config),
+                "model_class": (
+                    f"{model.__class__.__module__}."
+                    f"{model.__class__.__qualname__}"
+                ),
+                "num_classes": self.num_classes,
+            }
+        else:
+            if not isinstance(model, nn.Module):
+                raise TypeError("model must be a torch.nn.Module.")
+
+            if self.model_config is None:
+                self.model_config = {
+                    "model_class": (
+                        f"{model.__class__.__module__}."
+                        f"{model.__class__.__qualname__}"
+                    ),
+                    "num_classes": self.num_classes,
+                }
 
         linear_layers = [
             layer
@@ -595,16 +694,6 @@ class TemporalExperiment:
             )
 
         self.model = model
-
-        if self.model_config is None:
-            self.model_config = {
-                "model_class": (
-                    f"{model.__class__.__module__}."
-                    f"{model.__class__.__qualname__}"
-                ),
-                "num_classes": self.num_classes,
-            }
-
         return model
 
     def _build_loaders(self) -> tuple[Any, Any, Any]:
@@ -649,9 +738,7 @@ class TemporalExperiment:
         prepared = self.prepared_data
 
         if self.model is None:
-            raise RuntimeError(
-                "No model is attached. Call build_model(model) first."
-            )
+            self.build_model()
 
         set_reproducibility_seed(self.config.training_seed)
 
@@ -696,7 +783,7 @@ class TemporalExperiment:
         checkpoint_manager = getattr(trainer, "checkpoint_manager", None)
         candidate_path = getattr(
             checkpoint_manager,
-            "checkpoint_path",
+            "path",
             None,
         )
 
@@ -704,7 +791,7 @@ class TemporalExperiment:
             candidate = Path(candidate_path)
 
             if candidate.exists():
-                trainer.load_checkpoint(str(candidate))
+                trainer.load_checkpoint(path=str(candidate))
                 checkpoint_path = str(candidate)
 
         # Evaluate only after training and optional best-checkpoint restoration.
@@ -861,9 +948,7 @@ class TemporalExperiment:
         data = self.prepared_data
 
         if self.model is None:
-            raise RuntimeError(
-                "No model is attached. Call build_model(model) first."
-            )
+            self.build_model()
 
         writer = ExperimentOutputWriter(root=str(output_root))
         experiment_dir = Path(
