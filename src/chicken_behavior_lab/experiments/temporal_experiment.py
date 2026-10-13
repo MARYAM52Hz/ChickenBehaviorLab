@@ -8,6 +8,7 @@ import time
 import traceback
 from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import datetime, timezone
+import math
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -93,10 +94,13 @@ class TemporalExperimentConfig:
             self.test_ratio,
         )
 
+        if any(not math.isfinite(ratio) for ratio in ratios):
+            raise ValueError("Split ratios must be finite numbers.")
+
         if any(ratio <= 0.0 or ratio >= 1.0 for ratio in ratios):
             raise ValueError("All split ratios must be between 0 and 1.")
 
-        if abs(sum(ratios) - 1.0) > 1e-6:
+        if not math.isclose(sum(ratios), 1.0, rel_tol=0.0, abs_tol=1e-6):
             raise ValueError("Split ratios must sum to 1.0.")
 
         if self.group_key not in {"video_id", "track_id"}:
@@ -113,11 +117,11 @@ class TemporalExperimentConfig:
         if self.epochs < 1:
             raise ValueError("epochs must be >= 1.")
 
-        if self.learning_rate <= 0:
-            raise ValueError("learning_rate must be positive.")
+        if not math.isfinite(self.learning_rate) or self.learning_rate <= 0:
+            raise ValueError("learning_rate must be a finite positive number.")
 
-        if self.weight_decay < 0:
-            raise ValueError("weight_decay cannot be negative.")
+        if not math.isfinite(self.weight_decay) or self.weight_decay < 0:
+            raise ValueError("weight_decay must be a finite non-negative number.")
 
         if not self.device:
             raise ValueError("device cannot be empty.")
@@ -1103,9 +1107,20 @@ class TemporalExperiment:
                 experiment_dir,
                 _metrics_to_dict(result.test_metrics),
             )
+            # Keep the error artifact semantically precise: all predictions
+            # belong in the complete prediction file, while this file contains
+            # only records whose predicted class differs from the true class.
+            prediction_errors = [
+                record
+                for record in result.prediction_records
+                if isinstance(record, Mapping)
+                and "true_index" in record
+                and "predicted_index" in record
+                and record["true_index"] != record["predicted_index"]
+            ]
             writer.save_prediction_errors(
                 experiment_dir,
-                result.prediction_records,
+                prediction_errors,
             )
 
             if hasattr(writer, "save_all_predictions"):
@@ -1124,6 +1139,8 @@ class TemporalExperiment:
                 "num_train_sequences": result.num_train_sequences,
                 "num_validation_sequences": result.num_validation_sequences,
                 "num_test_sequences": result.num_test_sequences,
+                "num_test_predictions": len(result.prediction_records),
+                "num_prediction_errors": len(prediction_errors),
                 "checkpoint_path": result.checkpoint_path,
                 "model_dimensions": result.model_dimensions,
                 "split_groups": result.split_groups,
