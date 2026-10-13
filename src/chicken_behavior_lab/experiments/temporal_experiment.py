@@ -205,7 +205,21 @@ def _to_serializable(value: Any) -> Any:
             for key, item in value.items()
         }
 
-    if isinstance(value, (list, tuple, set)):
+    if isinstance(value, set):
+        # Sets have no stable iteration order; sort their serialized values so
+        # manifests and JSON artifacts remain reproducible across runs.
+        serialized_items = [_to_serializable(item) for item in value]
+        return sorted(
+            serialized_items,
+            key=lambda item: json.dumps(
+                item,
+                ensure_ascii=False,
+                sort_keys=True,
+                default=str,
+            ),
+        )
+
+    if isinstance(value, (list, tuple)):
         return [_to_serializable(item) for item in value]
 
     if hasattr(value, "to_dict") and callable(value.to_dict):
@@ -322,7 +336,7 @@ class TemporalExperiment:
         self,
         config: TemporalExperimentConfig,
         model: nn.Module | None = None,
-        model_config: Mapping[str, Any] | None = None,
+        model_config: TemporalModelConfig | Mapping[str, Any] | None = None,
     ) -> None:
         self.config = config
         self.config.validate()
@@ -648,6 +662,11 @@ class TemporalExperiment:
                     )
 
             model_config.validate()
+
+            # Seed before model initialization, not only before the training
+            # loop, so repeated runs start from the same initial weights.
+            set_reproducibility_seed(self.config.training_seed)
+
             model = build_temporal_model(
                 model_config=model_config,
                 num_classes=self.num_classes,
@@ -739,7 +758,12 @@ class TemporalExperiment:
 
         if self.model is None:
             self.build_model()
+        else:
+            # Validate caller-supplied models and ensure manifest metadata exists.
+            self.build_model(model=self.model)
 
+        # Re-seed stochastic training operations (sampling/dropout) after
+        # model initialization.
         set_reproducibility_seed(self.config.training_seed)
 
         if self.config.device.startswith("cuda") and not torch.cuda.is_available():
@@ -949,6 +973,10 @@ class TemporalExperiment:
 
         if self.model is None:
             self.build_model()
+        elif self.model_config is None:
+            # A supplied model without explicit metadata must still be
+            # validated and described before the manifest is created.
+            self.build_model(model=self.model)
 
         writer = ExperimentOutputWriter(root=str(output_root))
         experiment_dir = Path(
@@ -1126,4 +1154,3 @@ class TemporalExperiment:
                 pass
 
             raise
-
