@@ -10,6 +10,7 @@ from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import datetime, timezone
 import math
 from pathlib import Path
+from numbers import Integral, Real
 from typing import Any, Mapping, Sequence
 
 import torch
@@ -82,6 +83,19 @@ class TemporalExperimentConfig:
 
     def validate(self) -> None:
         """Validate configuration values before data preparation or training."""
+        integer_fields = {
+            "sequence_length": self.sequence_length,
+            "sequence_stride": self.sequence_stride,
+            "split_seed": self.split_seed,
+            "training_seed": self.training_seed,
+            "batch_size": self.batch_size,
+            "num_workers": self.num_workers,
+            "epochs": self.epochs,
+        }
+        for field_name, value in integer_fields.items():
+            if isinstance(value, bool) or not isinstance(value, Integral):
+                raise ValueError(f"{field_name} must be an integer.")
+
         if self.sequence_length < 1:
             raise ValueError("sequence_length must be >= 1.")
 
@@ -93,6 +107,12 @@ class TemporalExperimentConfig:
             self.validation_ratio,
             self.test_ratio,
         )
+
+        if any(
+            isinstance(ratio, bool) or not isinstance(ratio, Real)
+            for ratio in ratios
+        ):
+            raise ValueError("Split ratios must be real numbers.")
 
         if any(not math.isfinite(ratio) for ratio in ratios):
             raise ValueError("Split ratios must be finite numbers.")
@@ -117,10 +137,20 @@ class TemporalExperimentConfig:
         if self.epochs < 1:
             raise ValueError("epochs must be >= 1.")
 
-        if not math.isfinite(self.learning_rate) or self.learning_rate <= 0:
+        if (
+            isinstance(self.learning_rate, bool)
+            or not isinstance(self.learning_rate, Real)
+            or not math.isfinite(self.learning_rate)
+            or self.learning_rate <= 0
+        ):
             raise ValueError("learning_rate must be a finite positive number.")
 
-        if not math.isfinite(self.weight_decay) or self.weight_decay < 0:
+        if (
+            isinstance(self.weight_decay, bool)
+            or not isinstance(self.weight_decay, Real)
+            or not math.isfinite(self.weight_decay)
+            or self.weight_decay < 0
+        ):
             raise ValueError("weight_decay must be a finite non-negative number.")
 
         if not isinstance(self.device, str) or not self.device.strip():
@@ -517,6 +547,20 @@ class TemporalExperiment:
 
         if not label_mapping:
             raise ValueError("No behavior classes were found in training data.")
+
+        # The classifier and CrossEntropyLoss require class targets to be
+        # contiguous zero-based indices. Fail early if the aligner violates
+        # that contract instead of surfacing a later tensor/index error.
+        mapping_indices = list(label_mapping.values())
+        if any(
+            isinstance(index, bool) or not isinstance(index, Integral)
+            for index in mapping_indices
+        ):
+            raise ValueError("Label mapping values must be integer class indices.")
+        if sorted(mapping_indices) != list(range(len(mapping_indices))):
+            raise ValueError(
+                "Label mapping indices must be unique, contiguous, and start at 0."
+            )
 
         train_samples = aligner.apply_label_mapping(
             train_samples,
