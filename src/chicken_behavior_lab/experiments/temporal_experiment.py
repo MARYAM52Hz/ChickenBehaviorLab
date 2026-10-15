@@ -123,8 +123,11 @@ class TemporalExperimentConfig:
         if not math.isfinite(self.weight_decay) or self.weight_decay < 0:
             raise ValueError("weight_decay must be a finite non-negative number.")
 
-        if not self.device:
-            raise ValueError("device cannot be empty.")
+        if not isinstance(self.device, str) or not self.device.strip():
+            raise ValueError("device must be a non-empty string.")
+
+        if not isinstance(self.checkpoint_dir, str) or not self.checkpoint_dir.strip():
+            raise ValueError("checkpoint_dir must be a non-empty string.")
 
 
 # ---------------------------------------------------------------------------
@@ -188,8 +191,13 @@ class TemporalExperimentResult:
 
 def _to_serializable(value: Any) -> Any:
     """Convert common Python and PyTorch objects to JSON-compatible values."""
-    if value is None or isinstance(value, (str, int, float, bool)):
+    if value is None or isinstance(value, (str, int, bool)):
         return value
+
+    if isinstance(value, float):
+        # JSON has no standard representation for NaN or infinity. Preserve
+        # the record while representing undefined metrics as null.
+        return value if math.isfinite(value) else None
 
     if isinstance(value, Path):
         return str(value)
@@ -723,6 +731,22 @@ class TemporalExperiment:
         """Create data loaders for the three prepared datasets."""
         data = self.prepared_data
 
+        dataset_sizes = {
+            "train": len(data.train_dataset),
+            "validation": len(data.validation_dataset),
+            "test": len(data.test_dataset),
+        }
+        empty_splits = [name for name, size in dataset_sizes.items() if size == 0]
+        if empty_splits:
+            details = ", ".join(
+                f"{name}={dataset_sizes[name]}" for name in empty_splits
+            )
+            raise ValueError(
+                "Temporal datasets must all contain at least one sequence; "
+                f"empty split(s): {details}. Check group splitting, class "
+                "coverage, and sequence_length/sequence_stride."
+            )
+
         train_loader = make_temporal_dataloader(
             data.train_dataset,
             batch_size=self.config.batch_size,
@@ -815,14 +839,24 @@ class TemporalExperiment:
             None,
         )
 
-        if candidate_path is not None:
-            candidate = Path(candidate_path)
+        if candidate_path is None:
+            raise RuntimeError(
+                "Trainer did not expose a checkpoint path; refusing to claim "
+                "best-checkpoint evaluation without a verifiable checkpoint."
+            )
 
-            if candidate.exists():
-                trainer.load_checkpoint(path=str(candidate))
-                checkpoint_path = str(candidate)
+        candidate = Path(candidate_path)
+        if not candidate.is_file():
+            raise RuntimeError(
+                "Training finished but the expected checkpoint file was not "
+                f"created: {candidate}. Check validation metrics and the "
+                "trainer/checkpoint configuration."
+            )
 
-        # Evaluate only after training and optional best-checkpoint restoration.
+        trainer.load_checkpoint(path=str(candidate))
+        checkpoint_path = str(candidate.resolve())
+
+        # Evaluate only after restoring the selected checkpoint.
         evaluator = TemporalEvaluator(
             model=self.model,
             device=device,
@@ -1006,6 +1040,7 @@ class TemporalExperiment:
                     file,
                     ensure_ascii=False,
                     indent=2,
+                    allow_nan=False,
                 )
                 file.flush()
 
