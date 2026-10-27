@@ -1,4 +1,3 @@
-
 """End-to-end orchestration tests using lightweight fake components."""
 
 import unittest
@@ -22,54 +21,30 @@ class FakeTracker:
 
 class FakePoseEstimator:
     def predict(self, tracks):
-        return [
-            {
-                "track_id": tracks[0]["track_id"],
-                "keypoints": [(2, 3)],
-            }
-        ]
+        return [{"track_id": tracks[0]["track_id"], "keypoints": [(2, 3)]}]
 
 
 class FakeSkeletonBuilder:
     def build(self, poses):
-        return [
-            {
-                "track_id": poses[0]["track_id"],
-                "nodes": ["head"],
-            }
-        ]
+        return [{"track_id": poses[0]["track_id"], "nodes": ["head"]}]
 
 
 class FakeBehaviorRecognizer:
     def predict(self, skeletons):
-        return [
-            {
-                "track_id": skeletons[0]["track_id"],
-                "label": "pecking",
-            }
-        ]
+        return [{"track_id": skeletons[0]["track_id"], "label": "pecking"}]
 
 
 class FakeEventGenerator:
     def generate(self, behaviors):
-        return [
-            {
-                "track_id": behaviors[0]["track_id"],
-                "event": "pecking_started",
-            }
-        ]
+        return [{"track_id": behaviors[0]["track_id"], "event": "pecking_started"}]
 
 
 class FakeAnalytics:
     def compute(self, events):
-        return {
-            "event_count": len(events),
-            "event_types": [event["event"] for event in events],
-        }
+        return {"event_count": len(events), "event_types": [e["event"] for e in events]}
 
 
 class EndToEndPipelineTests(unittest.TestCase):
-
     def setUp(self):
         detector = FakeDetector()
         tracker = FakeTracker()
@@ -80,50 +55,35 @@ class EndToEndPipelineTests(unittest.TestCase):
         analytics = FakeAnalytics()
 
         self.pipeline = ChickenBehaviorPipeline([
-            PipelineStage(
-                "detection",
-                lambda c: detector.detect(c.video),
-            ),
+            PipelineStage("detection", lambda c: detector.detect(c.video)),
             PipelineStage(
                 "tracking",
-                lambda c: tracker.track(
-                    c.get_output("detection")
-                ),
+                lambda c: tracker.track(c.get_output("detection")),
                 requires=("detection",),
             ),
             PipelineStage(
                 "pose",
-                lambda c: pose_estimator.predict(
-                    c.get_output("tracking")
-                ),
+                lambda c: pose_estimator.predict(c.get_output("tracking")),
                 requires=("tracking",),
             ),
             PipelineStage(
                 "skeleton",
-                lambda c: skeleton_builder.build(
-                    c.get_output("pose")
-                ),
+                lambda c: skeleton_builder.build(c.get_output("pose")),
                 requires=("pose",),
             ),
             PipelineStage(
                 "behavior",
-                lambda c: behavior_recognizer.predict(
-                    c.get_output("skeleton")
-                ),
+                lambda c: behavior_recognizer.predict(c.get_output("skeleton")),
                 requires=("skeleton",),
             ),
             PipelineStage(
                 "events",
-                lambda c: event_generator.generate(
-                    c.get_output("behavior")
-                ),
+                lambda c: event_generator.generate(c.get_output("behavior")),
                 requires=("behavior",),
             ),
             PipelineStage(
                 "analytics",
-                lambda c: analytics.compute(
-                    c.get_output("events")
-                ),
+                lambda c: analytics.compute(c.get_output("events")),
                 requires=("events",),
             ),
         ])
@@ -136,31 +96,12 @@ class EndToEndPipelineTests(unittest.TestCase):
 
         self.assertEqual(
             result.get("analytics"),
-            {
-                "event_count": 1,
-                "event_types": ["pecking_started"],
-            },
+            {"event_count": 1, "event_types": ["pecking_started"]},
         )
-
-        self.assertEqual(
-            result.get("behavior")[0]["label"],
-            "pecking",
-        )
-
-        self.assertEqual(
-            result.get("tracking")[0]["track_id"],
-            7,
-        )
-
-        self.assertEqual(
-            tuple(result.outputs),
-            self.pipeline.stage_names,
-        )
-
-        self.assertEqual(
-            tuple(result.stage_durations_seconds),
-            self.pipeline.stage_names,
-        )
+        self.assertEqual(result.get("behavior")[0]["label"], "pecking")
+        self.assertEqual(result.get("tracking")[0]["track_id"], 7)
+        self.assertEqual(tuple(result.outputs), self.pipeline.stage_names)
+        self.assertEqual(tuple(result.stage_durations_seconds), self.pipeline.stage_names)
 
     def test_metadata_is_available_to_each_stage(self):
         seen = []
@@ -168,18 +109,10 @@ class EndToEndPipelineTests(unittest.TestCase):
         pipeline = ChickenBehaviorPipeline([
             PipelineStage(
                 "capture_metadata",
-                lambda context: (
-                    seen.append(context.metadata["video_id"])
-                    or "ok"
-                ),
+                lambda context: seen.append(context.metadata["video_id"]) or "ok",
             ),
         ])
-
-        pipeline.run(
-            "video.mp4",
-            metadata={"video_id": "v-42"},
-        )
-
+        pipeline.run("video.mp4", metadata={"video_id": "v-42"})
         self.assertEqual(seen, ["v-42"])
 
     def test_failure_stops_downstream_stages(self):
@@ -191,10 +124,7 @@ class EndToEndPipelineTests(unittest.TestCase):
 
         pipeline = ChickenBehaviorPipeline([
             PipelineStage("first", fail),
-            PipelineStage(
-                "second",
-                lambda context: called.append("second"),
-            ),
+            PipelineStage("second", lambda context: called.append("second")),
         ])
 
         with self.assertRaises(PipelineStageError):
@@ -205,3 +135,4 @@ class EndToEndPipelineTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
