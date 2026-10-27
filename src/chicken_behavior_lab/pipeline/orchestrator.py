@@ -1,4 +1,3 @@
-
 """Small, dependency-injected orchestration layer for ChickenBehaviorLab.
 
 Stage adapters are intentionally injected as callables. This keeps orchestration
@@ -62,12 +61,10 @@ class PipelineStage:
     def __post_init__(self) -> None:
         if not isinstance(self.name, str) or not self.name.strip():
             raise PipelineConfigurationError("Stage name must be non-empty.")
-
         if not callable(self.processor):
             raise PipelineConfigurationError(
                 f"Processor for stage {self.name!r} must be callable."
             )
-
         if len(set(self.requires)) != len(self.requires):
             raise PipelineConfigurationError(
                 f"Stage {self.name!r} has duplicate dependencies."
@@ -90,8 +87,8 @@ class ChickenBehaviorPipeline:
     """Run configured stages sequentially and retain every stage result.
 
     Recommended stage names are ``detection``, ``tracking``, ``pose``,
-    ``skeleton``, ``behavior``, ``events``, and ``analytics``.
-    These names are conventions, not hard-coded requirements.
+    ``skeleton``, ``behavior``, ``events``, and ``analytics``. These names are
+    conventions, not hard-coded requirements.
     """
 
     def __init__(self, stages: Sequence[PipelineStage]) -> None:
@@ -101,23 +98,17 @@ class ChickenBehaviorPipeline:
             )
 
         names = [stage.name for stage in stages]
-
         if len(names) != len(set(names)):
-            raise PipelineConfigurationError(
-                "Pipeline stage names must be unique."
-            )
+            raise PipelineConfigurationError("Pipeline stage names must be unique.")
 
         available: set[str] = set()
-
         for stage in stages:
             missing = set(stage.requires) - available
-
             if missing:
                 raise PipelineConfigurationError(
-                    f"Stage {stage.name!r} requires outputs that do not "
-                    f"come from earlier stages: {sorted(missing)}."
+                    f"Stage {stage.name!r} requires outputs that do not come "
+                    f"from earlier stages: {sorted(missing)}."
                 )
-
             available.add(stage.name)
 
         self._stages = tuple(stages)
@@ -135,12 +126,11 @@ class ChickenBehaviorPipeline:
     ) -> PipelineResult:
         """Execute all stages and return results and per-stage wall time.
 
-        Any stage failure stops the run and raises ``PipelineStageError``.
-        The original exception is preserved as ``__cause__``.
+        Any stage failure stops the run and raises ``PipelineStageError`` with
+        the original exception attached as ``__cause__``.
         """
         stage_outputs: dict[str, Any] = {}
         timings: dict[str, float] = {}
-
         context = PipelineContext(
             video=video,
             metadata=MappingProxyType(dict(metadata or {})),
@@ -149,41 +139,34 @@ class ChickenBehaviorPipeline:
 
         for stage in self._stages:
             missing = set(stage.requires) - set(stage_outputs)
-
             if missing:
+                # Defensive check in case this class is extended in future.
                 raise PipelineConfigurationError(
-                    f"Stage {stage.name!r} is missing outputs: "
-                    f"{sorted(missing)}."
+                    f"Stage {stage.name!r} is missing outputs: {sorted(missing)}."
                 )
 
             LOGGER.debug("Starting pipeline stage: %s", stage.name)
             started = perf_counter()
-
             try:
                 output = stage.processor(context)
-
             except Exception as exc:
                 elapsed = perf_counter() - started
                 timings[stage.name] = elapsed
-
                 LOGGER.exception(
                     "Pipeline stage %s failed after %.4f seconds",
                     stage.name,
                     elapsed,
                 )
-
                 error = PipelineStageError(stage.name)
                 raise error from exc
 
             timings[stage.name] = perf_counter() - started
             stage_outputs[stage.name] = output
-
             context = PipelineContext(
                 video=video,
                 metadata=context.metadata,
                 outputs=MappingProxyType(stage_outputs.copy()),
             )
-
             LOGGER.debug(
                 "Finished pipeline stage: %s (%.4f seconds)",
                 stage.name,
@@ -194,3 +177,4 @@ class ChickenBehaviorPipeline:
             outputs=MappingProxyType(stage_outputs.copy()),
             stage_durations_seconds=MappingProxyType(timings.copy()),
         )
+
