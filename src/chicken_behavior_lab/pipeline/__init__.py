@@ -1,12 +1,14 @@
 """Pipeline orchestration interfaces."""
 
-from .orchestrator import (
-    ChickenBehaviorPipeline,
-    PipelineConfigurationError,
-    PipelineContext,
-    PipelineResult,
-    PipelineStage,
-    PipelineStageError,
+from .contracts import (
+    ContractValidationError,
+    Detection,
+    Keypoint,
+    PoseEstimate,
+    SkeletonFrame,
+    TrackObservation,
+    validate_pose_matches_track,
+    validate_skeleton_matches_pose,
 )
 
 __all__ = [
