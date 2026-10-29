@@ -1,5 +1,7 @@
 """Pipeline orchestration interfaces."""
 
+from .keypoint_schema import KeypointSchema
+from .pose_adapter import PoseAdapter
 from .contracts import (
     ContractValidationError,
     Detection,
@@ -9,6 +11,7 @@ from .contracts import (
     TrackObservation,
     validate_pose_matches_track,
     validate_skeleton_matches_pose,
+
 )
 
 __all__ = [
@@ -26,4 +29,6 @@ __all__ = [
     "TrackObservation",
     "validate_pose_matches_track",
     "validate_skeleton_matches_pose",
+    "KeypointSchema",
+    "PoseAdapter",
 ]
