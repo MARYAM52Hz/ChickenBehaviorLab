@@ -32,4 +32,5 @@ __all__ = [
     "validate_skeleton_matches_pose",
     "KeypointSchema",
     "PoseAdapter",
+    "PoseToSkeletonAdapter",
 ]
