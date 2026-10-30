@@ -2,6 +2,7 @@
 
 from .keypoint_schema import KeypointSchema
 from .pose_adapter import PoseAdapter
+from .skeleton_adapter import PoseToSkeletonAdapter
 from .contracts import (
     ContractValidationError,
     Detection,
