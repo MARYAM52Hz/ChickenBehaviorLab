@@ -36,4 +36,6 @@ __all__ = [
     "KeypointSchema",
     "PoseAdapter",
     "PoseToSkeletonAdapter",
+    "SkeletonGraphData",
+"SkeletonGraphEncoder",
 ]
