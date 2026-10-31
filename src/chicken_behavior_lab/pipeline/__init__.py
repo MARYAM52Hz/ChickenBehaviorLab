@@ -14,7 +14,10 @@ from .contracts import (
     validate_skeleton_matches_pose,
 
 )
-
+from .skeleton_graph_data import (
+    SkeletonGraphData,
+    SkeletonGraphEncoder,
+)
 __all__ = [
     "ChickenBehaviorPipeline",
     "PipelineConfigurationError",
