@@ -31,15 +31,5 @@ from chicken_behavior_lab.features.motion import (
 
 
 __all__ = [
-    "PositionFeatures",
-    "PositionFeatureExtractor",
-    "VelocityFeatures",
-    "VelocityFeatureExtractor",
-    "AccelerationFeatures",
-    "AccelerationFeatureExtractor",
-    "JointAngleDefinition",
-    "JointAngleFeatures",
-    "JointAngleFeatureExtractor",
-    "MotionFeatureFrame",
-    "MotionFeatureExtractor",
+
 ]
