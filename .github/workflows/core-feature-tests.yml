@@ -35,4 +35,5 @@ jobs:
           tests/test_temporal_features.py
           tests/test_tracker.py
           tests/test_joint_angle_features.py
+          tests/test_lightweight_model_imports.py
           tests/pipeline
