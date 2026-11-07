@@ -83,7 +83,16 @@ class PositionFeatureExtractor:
             if keypoint is None:
                 continue
 
-            confidence[index] = float(keypoint.confidence)
+            point_confidence = float(keypoint.confidence)
+            finite_point = (
+                np.isfinite(point_confidence)
+                and np.isfinite(keypoint.x)
+                and np.isfinite(keypoint.y)
+            )
+            if not finite_point:
+                continue
+
+            confidence[index] = point_confidence
             if keypoint.is_valid(self.confidence_threshold):
                 coordinates[index] = (keypoint.x, keypoint.y)
                 valid_mask[index] = True
