@@ -68,7 +68,7 @@ class VelocityFeatureExtractor:
     ) -> VelocityFeatures:
         """Calculate per-keypoint velocity in the configured stable order."""
 
-        self._validate_inputs(previous, current, delta_time)
+        dt = self._validate_inputs(previous, current, delta_time)
 
         previous_by_type = self._index_keypoints(previous)
         current_by_type = self._index_keypoints(current)
@@ -96,9 +96,18 @@ class VelocityFeatureExtractor:
             ):
                 continue
 
+            coordinates = (
+                previous_point.x,
+                previous_point.y,
+                current_point.x,
+                current_point.y,
+            )
+            if not all(np.isfinite(value) for value in coordinates):
+                continue
+
             velocity[index] = (
-                (current_point.x - previous_point.x) / delta_time,
-                (current_point.y - previous_point.y) / delta_time,
+                (current_point.x - previous_point.x) / dt,
+                (current_point.y - previous_point.y) / dt,
             )
             valid_mask[index] = True
 
@@ -127,14 +136,23 @@ class VelocityFeatureExtractor:
         previous: TrackedSkeleton,
         current: TrackedSkeleton,
         delta_time: float,
-    ) -> None:
+    ) -> float:
         if previous.track_id != current.track_id:
             raise ValueError(
                 "Track ID mismatch: "
                 f"previous={previous.track_id}, current={current.track_id}"
             )
 
-        if isinstance(delta_time, bool) or not isinstance(delta_time, (int, float)):
+        if isinstance(delta_time, bool):
             raise ValueError("delta_time must be a finite positive number.")
-        if not math.isfinite(float(delta_time)) or delta_time <= 0.0:
+        try:
+            dt = float(delta_time)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError(
+                "delta_time must be a finite positive number."
+            ) from exc
+
+        if not math.isfinite(dt) or dt <= 0.0:
             raise ValueError("delta_time must be a finite positive number.")
+
+        return dt
