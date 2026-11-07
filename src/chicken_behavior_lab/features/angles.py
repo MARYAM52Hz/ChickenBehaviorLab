@@ -2,276 +2,133 @@
 ChickenBehaviorLab Joint Angle Features
 =======================================
 
-Generic utilities for extracting joint-angle features
-from chicken skeletons.
-
-The angle extractor is intentionally independent from
-the chicken skeleton topology. Joint definitions such as
-neck angle, body angle, or leg angle should be provided
-by the skeleton configuration rather than hard-coded here.
+Extract configured 2D joint angles from canonical chicken keypoints.
+Angles are returned in radians.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
+from numbers import Real
 
 import numpy as np
 
-from chicken_behavior_lab.models.tracked_skeleton import (
-    TrackedSkeleton,
-)
+from chicken_behavior_lab.core.enums.keypoints import KeypointType
+from chicken_behavior_lab.models.tracked_skeleton import TrackedSkeleton
 
 
 @dataclass(frozen=True, slots=True)
 class JointAngleDefinition:
-    """
-    Definition of one joint angle.
-
-    The angle is measured at the middle keypoint.
-
-    Example
-    -------
-    For:
-
-        A ---- B ---- C
-
-    the calculated angle is:
-
-        angle(A, B, C)
-
-    Attributes
-    ----------
-    name:
-        Unique semantic name of the angle.
-
-    first_keypoint:
-        Name of the first keypoint.
-
-    vertex_keypoint:
-        Name of the middle keypoint where the angle
-        is measured.
-
-    third_keypoint:
-        Name of the third keypoint.
-    """
+    """Definition of an angle measured at the middle keypoint."""
 
     name: str
-
     first_keypoint: str
-
     vertex_keypoint: str
-
     third_keypoint: str
 
 
 @dataclass(slots=True)
 class JointAngleFeatures:
-    """
-    Joint-angle features for one skeleton observation.
-
-    Attributes
-    ----------
-    names:
-        Ordered names of the calculated angles.
-
-    angles:
-        Angle values in radians.
-
-        Shape:
-
-            (num_angles,)
-
-    valid_mask:
-        Indicates whether each angle is valid.
-
-        Shape:
-
-            (num_angles,)
-    """
+    """Angle values in radians and a corresponding validity mask."""
 
     names: tuple[str, ...]
-
     angles: np.ndarray
-
     valid_mask: np.ndarray
 
     @property
     def num_angles(self) -> int:
-        """
-        Return the number of defined angles.
-        """
-
         return len(self.names)
 
     @property
     def feature_dimension(self) -> int:
-        """
-        Return the number of angle features.
-        """
-
         return self.angles.shape[0]
 
 
 class JointAngleFeatureExtractor:
-    """
-    Extract joint angles from a TrackedSkeleton.
-
-    Angles are returned in radians.
-    """
+    """Extract configured joint angles from a TrackedSkeleton."""
 
     def __init__(
         self,
         definitions: list[JointAngleDefinition],
         confidence_threshold: float = 0.3,
     ) -> None:
-        """
-        Parameters
-        ----------
-        definitions:
-            List of joint-angle definitions.
-
-        confidence_threshold:
-            Minimum keypoint confidence required
-            for a valid angle.
-        """
-
-        if not 0.0 <= confidence_threshold <= 1.0:
-            raise ValueError(
-                "confidence_threshold must "
-                "be between 0.0 and 1.0."
-            )
-
-        self.definitions = tuple(
-            definitions
-        )
-
-        self.confidence_threshold = (
-            confidence_threshold
-        )
-
-    # =====================================================
-    # Main extraction
-    # =====================================================
-
-    def extract(
-        self,
-        observation: TrackedSkeleton,
-    ) -> JointAngleFeatures:
-        """
-        Extract all configured joint angles.
-
-        Parameters
-        ----------
-        observation:
-            Tracked skeleton observation.
-
-        Returns
-        -------
-        JointAngleFeatures
-            Calculated joint angles and validity masks.
-        """
-
-        keypoints = {
-            keypoint.name: keypoint
-            for keypoint
-            in observation.skeleton.keypoints
-        }
-
-        angle_values = np.zeros(
-            len(self.definitions),
-            dtype=np.float32,
-        )
-
-        valid_mask = np.zeros(
-            len(self.definitions),
-            dtype=bool,
-        )
-
-        names = tuple(
-            definition.name
-            for definition
-            in self.definitions
-        )
-
-        for index, definition in enumerate(
-            self.definitions
+        if (
+            isinstance(confidence_threshold, bool)
+            or not isinstance(confidence_threshold, Real)
+            or not math.isfinite(float(confidence_threshold))
+            or not 0.0 <= float(confidence_threshold) <= 1.0
         ):
+            raise ValueError("confidence_threshold must be a finite number in [0, 1].")
 
-            first = keypoints.get(
-                definition.first_keypoint
+        self.definitions = tuple(definitions)
+        if any(not isinstance(item, JointAngleDefinition) for item in self.definitions):
+            raise TypeError("definitions must contain JointAngleDefinition instances.")
+
+        names = [item.name for item in self.definitions]
+        if any(not isinstance(name, str) or not name.strip() for name in names):
+            raise ValueError("Each angle definition must have a non-empty name.")
+        if len(set(names)) != len(names):
+            raise ValueError("Angle definition names must be unique.")
+
+        valid_keypoint_names = {item.value for item in KeypointType}
+        for definition in self.definitions:
+            referenced = (
+                definition.first_keypoint,
+                definition.vertex_keypoint,
+                definition.third_keypoint,
             )
+            if any(name not in valid_keypoint_names for name in referenced):
+                raise ValueError(
+                    f"Angle definition {definition.name!r} references an unknown "
+                    "canonical keypoint."
+                )
 
-            vertex = keypoints.get(
-                definition.vertex_keypoint
+        self.confidence_threshold = float(confidence_threshold)
+
+    def extract(self, observation: TrackedSkeleton) -> JointAngleFeatures:
+        keypoints = {}
+        for keypoint in observation.skeleton.keypoints:
+            name = keypoint.keypoint_type.value
+            if name in keypoints:
+                raise ValueError(f"Duplicate keypoint type in skeleton: {name}.")
+            keypoints[name] = keypoint
+
+        angles = np.zeros(len(self.definitions), dtype=np.float32)
+        valid_mask = np.zeros(len(self.definitions), dtype=bool)
+        names = tuple(definition.name for definition in self.definitions)
+
+        for index, definition in enumerate(self.definitions):
+            points = (
+                keypoints.get(definition.first_keypoint),
+                keypoints.get(definition.vertex_keypoint),
+                keypoints.get(definition.third_keypoint),
             )
+            if any(point is None for point in points):
+                continue
 
-            third = keypoints.get(
-                definition.third_keypoint
-            )
-
-            if (
-                first is None
-                or vertex is None
-                or third is None
+            if not all(
+                point.is_valid(self.confidence_threshold)
+                for point in points
             ):
                 continue
 
-            if (
-                first.confidence
-                < self.confidence_threshold
-                or vertex.confidence
-                < self.confidence_threshold
-                or third.confidence
-                < self.confidence_threshold
-            ):
-                continue
-
-            first_point = np.array(
-                [
-                    first.x,
-                    first.y,
-                ],
-                dtype=np.float32,
-            )
-
-            vertex_point = np.array(
-                [
-                    vertex.x,
-                    vertex.y,
-                ],
-                dtype=np.float32,
-            )
-
-            third_point = np.array(
-                [
-                    third.x,
-                    third.y,
-                ],
-                dtype=np.float32,
-            )
-
-            angle = self._calculate_angle(
-                first_point,
-                vertex_point,
-                third_point,
-            )
-
+            coordinates = [
+                np.asarray([point.x, point.y], dtype=np.float64)
+                for point in points
+            ]
+            angle = self._calculate_angle(*coordinates)
             if angle is None:
                 continue
 
-            angle_values[index] = angle
-
+            angles[index] = angle
             valid_mask[index] = True
 
         return JointAngleFeatures(
             names=names,
-            angles=angle_values,
+            angles=angles,
             valid_mask=valid_mask,
         )
-
-    # =====================================================
-    # Angle calculation
-    # =====================================================
 
     @staticmethod
     def _calculate_angle(
@@ -279,50 +136,26 @@ class JointAngleFeatureExtractor:
         vertex_point: np.ndarray,
         third_point: np.ndarray,
     ) -> float | None:
-        """
-        Calculate the angle formed by three points.
-
-        The angle is measured at ``vertex_point``.
-
-        Returns
-        -------
-        float | None
-            Angle in radians, or None when the angle
-            cannot be reliably calculated.
-        """
-
-        vector_a = (
-            first_point - vertex_point
-        )
-
-        vector_b = (
-            third_point - vertex_point
-        )
-
-        norm_a = np.linalg.norm(
-            vector_a
-        )
-
-        norm_b = np.linalg.norm(
-            vector_b
-        )
-
-        if norm_a < 1e-8 or norm_b < 1e-8:
+        """Return the unsigned angle at vertex_point, or None if undefined."""
+        if not all(
+            np.all(np.isfinite(point))
+            for point in (first_point, vertex_point, third_point)
+        ):
             return None
 
-        cosine = np.dot(
-            vector_a,
-            vector_b,
-        ) / (
-            norm_a * norm_b
-        )
+        vector_a = first_point - vertex_point
+        vector_b = third_point - vertex_point
+        norm_a = np.linalg.norm(vector_a)
+        norm_b = np.linalg.norm(vector_b)
 
-        cosine = np.clip(
-            cosine,
-            -1.0,
-            1.0,
-        )
+        if (
+            not np.isfinite(norm_a)
+            or not np.isfinite(norm_b)
+            or norm_a < 1e-8
+            or norm_b < 1e-8
+        ):
+            return None
 
-        return float(
-            np.arccos(cosine)
-        )
+        cosine = np.dot(vector_a, vector_b) / (norm_a * norm_b)
+        cosine = np.clip(cosine, -1.0, 1.0)
+        return float(np.arccos(cosine))
