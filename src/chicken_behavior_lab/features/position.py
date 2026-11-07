@@ -2,8 +2,7 @@
 ChickenBehaviorLab Position Features
 =====================================
 
-Utilities for extracting spatial position features
-from tracked chicken skeletons.
+Extract fixed-order spatial features from tracked chicken skeletons.
 """
 
 from __future__ import annotations
@@ -12,115 +11,95 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from chicken_behavior_lab.models.tracked_skeleton import (
-    TrackedSkeleton,
-)
+from chicken_behavior_lab.core.enums.keypoints import KeypointType
+from chicken_behavior_lab.models.tracked_skeleton import TrackedSkeleton
 
 
 @dataclass(slots=True)
 class PositionFeatures:
-    """
-    Spatial position features for one skeleton.
-
-    Attributes
-    ----------
-    coordinates:
-        Keypoint coordinates with shape:
-
-            (num_keypoints, 2)
-
-        where the last dimension represents:
-
-            [x, y]
-
-    confidence:
-        Keypoint confidence values with shape:
-
-            (num_keypoints,)
-    """
+    """Spatial features in canonical keypoint order."""
 
     coordinates: np.ndarray
-
     confidence: np.ndarray
+    valid_mask: np.ndarray
+    keypoint_types: tuple[KeypointType, ...]
 
     @property
     def num_keypoints(self) -> int:
-        """
-        Return the number of keypoints.
-        """
-
         return self.coordinates.shape[0]
 
     @property
     def feature_dimension(self) -> int:
-        """
-        Return the number of spatial features
-        per keypoint.
-        """
-
         return self.coordinates.shape[1]
 
 
 class PositionFeatureExtractor:
-    """
-    Extract spatial position features from
-    a TrackedSkeleton.
-    """
+    """Extract x/y, confidence, and validity in a stable node order."""
 
-    def extract(
+    def __init__(
         self,
-        observation: TrackedSkeleton,
-    ) -> PositionFeatures:
-        """
-        Extract x/y coordinates and confidence
-        from a tracked skeleton.
+        confidence_threshold: float = 0.25,
+        keypoint_order: tuple[KeypointType, ...] | None = None,
+    ) -> None:
+        if not 0.0 <= confidence_threshold <= 1.0:
+            raise ValueError("confidence_threshold must be in [0, 1].")
 
-        Parameters
-        ----------
-        observation:
-            Tracked skeleton for one chicken
-            in one frame.
+        self.confidence_threshold = float(confidence_threshold)
+        self.keypoint_order = (
+            tuple(KeypointType)
+            if keypoint_order is None
+            else tuple(keypoint_order)
+        )
 
-        Returns
-        -------
-        PositionFeatures
-            Spatial keypoint features.
-        """
+        if not self.keypoint_order:
+            raise ValueError("keypoint_order cannot be empty.")
+        if len(set(self.keypoint_order)) != len(self.keypoint_order):
+            raise ValueError("keypoint_order must contain unique keypoint types.")
+        if any(not isinstance(item, KeypointType) for item in self.keypoint_order):
+            raise TypeError("keypoint_order must contain KeypointType values.")
 
-        keypoints = observation.skeleton.keypoints
+    def extract(self, observation: TrackedSkeleton) -> PositionFeatures:
+        """Return fixed-size arrays; absent/invalid nodes are zero-filled and masked."""
 
-        if not keypoints:
-            return PositionFeatures(
-                coordinates=np.empty(
-                    (0, 2),
-                    dtype=np.float32,
-                ),
-                confidence=np.empty(
-                    (0,),
-                    dtype=np.float32,
-                ),
+        by_type = {}
+        for keypoint in observation.skeleton.keypoints:
+            if keypoint.keypoint_type in by_type:
+                raise ValueError(
+                    f"Duplicate keypoint type: {keypoint.keypoint_type.value}."
+                )
+            by_type[keypoint.keypoint_type] = keypoint
+
+        unknown = set(by_type) - set(self.keypoint_order)
+        if unknown:
+            names = sorted(item.value for item in unknown)
+            raise ValueError(f"Unexpected keypoint types: {names}.")
+
+        coordinates = np.zeros((len(self.keypoint_order), 2), dtype=np.float32)
+        confidence = np.zeros((len(self.keypoint_order),), dtype=np.float32)
+        valid_mask = np.zeros((len(self.keypoint_order),), dtype=bool)
+
+        for index, keypoint_type in enumerate(self.keypoint_order):
+            keypoint = by_type.get(keypoint_type)
+            if keypoint is None:
+                continue
+
+            point_confidence = float(keypoint.confidence)
+            finite_point = (
+                np.isfinite(point_confidence)
+                and np.isfinite(keypoint.x)
+                and np.isfinite(keypoint.y)
             )
+            if not finite_point:
+                continue
 
-        coordinates = np.array(
-            [
-                [
-                    keypoint.x,
-                    keypoint.y,
-                ]
-                for keypoint in keypoints
-            ],
-            dtype=np.float32,
-        )
-
-        confidence = np.array(
-            [
-                keypoint.confidence
-                for keypoint in keypoints
-            ],
-            dtype=np.float32,
-        )
+            confidence[index] = point_confidence
+            if keypoint.is_valid(self.confidence_threshold):
+                coordinates[index] = (keypoint.x, keypoint.y)
+                valid_mask[index] = True
 
         return PositionFeatures(
             coordinates=coordinates,
             confidence=confidence,
+            valid_mask=valid_mask,
+            keypoint_types=self.keypoint_order,
         )
