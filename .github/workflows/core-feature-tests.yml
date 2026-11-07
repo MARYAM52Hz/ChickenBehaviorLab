@@ -33,4 +33,5 @@ jobs:
           tests/test_velocity_features.py
           tests/test_motion_features.py
           tests/test_temporal_features.py
+          tests/test_tracker.py
           tests/pipeline
