@@ -2,108 +2,63 @@
 ChickenBehaviorLab Velocity Features
 =====================================
 
-Utilities for extracting temporal velocity features
-from tracked chicken skeletons.
+Extract temporal velocity features using anatomical keypoint identity,
+not list position.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 
 import numpy as np
 
-from chicken_behavior_lab.models.tracked_skeleton import (
-    TrackedSkeleton,
-)
+from chicken_behavior_lab.core.enums.keypoints import KeypointType
+from chicken_behavior_lab.models.tracked_skeleton import TrackedSkeleton
 
 
 @dataclass(slots=True)
 class VelocityFeatures:
-    """
-    Velocity features for one temporal transition.
-
-    Attributes
-    ----------
-    velocity:
-        Velocity vectors for each keypoint.
-
-        Shape:
-            (num_keypoints, 2)
-
-        The last dimension contains:
-
-            [vx, vy]
-
-    speed:
-        Scalar speed for each keypoint.
-
-        Shape:
-            (num_keypoints,)
-
-    valid_mask:
-        Boolean mask indicating which keypoints
-        have sufficient confidence for velocity
-        estimation.
-
-        Shape:
-            (num_keypoints,)
-    """
+    """Velocity vectors and their validity in canonical keypoint order."""
 
     velocity: np.ndarray
-
     speed: np.ndarray
-
     valid_mask: np.ndarray
+    keypoint_types: tuple[KeypointType, ...]
 
     @property
     def num_keypoints(self) -> int:
-        """
-        Return the number of keypoints.
-        """
-
         return self.velocity.shape[0]
 
     @property
     def feature_dimension(self) -> int:
-        """
-        Return the number of velocity components
-        per keypoint.
-        """
-
         return self.velocity.shape[1]
 
 
 class VelocityFeatureExtractor:
-    """
-    Extract temporal velocity features from
-    consecutive tracked skeletons.
-    """
+    """Estimate velocity after matching points by KeypointType."""
 
     def __init__(
         self,
         confidence_threshold: float = 0.3,
+        keypoint_order: tuple[KeypointType, ...] | None = None,
     ) -> None:
-        """
-        Parameters
-        ----------
-        confidence_threshold:
-            Minimum confidence required for a keypoint
-            to participate in velocity estimation.
-        """
-
         if not 0.0 <= confidence_threshold <= 1.0:
-            raise ValueError(
-                "confidence_threshold must "
-                "be between 0.0 and 1.0."
-            )
+            raise ValueError("confidence_threshold must be in [0, 1].")
 
-        self.confidence_threshold = (
-            confidence_threshold
+        self.confidence_threshold = float(confidence_threshold)
+        self.keypoint_order = (
+            tuple(KeypointType)
+            if keypoint_order is None
+            else tuple(keypoint_order)
         )
 
-    # =====================================================
-    # Main Extraction
-    # =====================================================
+        if not self.keypoint_order:
+            raise ValueError("keypoint_order cannot be empty.")
+        if len(set(self.keypoint_order)) != len(self.keypoint_order):
+            raise ValueError("keypoint_order must contain unique keypoint types.")
+        if any(not isinstance(item, KeypointType) for item in self.keypoint_order):
+            raise TypeError("keypoint_order must contain KeypointType values.")
 
     def extract(
         self,
@@ -111,158 +66,75 @@ class VelocityFeatureExtractor:
         current: TrackedSkeleton,
         delta_time: float,
     ) -> VelocityFeatures:
-        """
-        Calculate keypoint velocity between two
-        consecutive observations.
+        """Calculate per-keypoint velocity in the configured stable order."""
 
-        Parameters
-        ----------
-        previous:
-            Previous skeleton observation.
+        self._validate_inputs(previous, current, delta_time)
 
-        current:
-            Current skeleton observation.
+        previous_by_type = self._index_keypoints(previous)
+        current_by_type = self._index_keypoints(current)
 
-        delta_time:
-            Time difference between observations
-            in seconds.
+        unexpected = (
+            set(previous_by_type) | set(current_by_type)
+        ) - set(self.keypoint_order)
+        if unexpected:
+            names = sorted(item.value for item in unexpected)
+            raise ValueError(f"Unexpected keypoint types: {names}.")
 
-        Returns
-        -------
-        VelocityFeatures
-            Velocity and speed for every keypoint.
+        velocity = np.zeros((len(self.keypoint_order), 2), dtype=np.float32)
+        valid_mask = np.zeros((len(self.keypoint_order),), dtype=bool)
 
-        Raises
-        ------
-        ValueError
-            If Track IDs do not match, delta_time is
-            invalid, or skeleton sizes differ.
-        """
+        for index, keypoint_type in enumerate(self.keypoint_order):
+            previous_point = previous_by_type.get(keypoint_type)
+            current_point = current_by_type.get(keypoint_type)
 
-        self._validate_inputs(
-            previous,
-            current,
-            delta_time,
-        )
-
-        previous_keypoints = (
-            previous.skeleton.keypoints
-        )
-
-        current_keypoints = (
-            current.skeleton.keypoints
-        )
-
-        num_keypoints = len(
-            current_keypoints
-        )
-
-        velocity = np.zeros(
-            (num_keypoints, 2),
-            dtype=np.float32,
-        )
-
-        valid_mask = np.zeros(
-            num_keypoints,
-            dtype=bool,
-        )
-
-        for index, (
-            previous_keypoint,
-            current_keypoint,
-        ) in enumerate(
-            zip(
-                previous_keypoints,
-                current_keypoints,
-            )
-        ):
-
-            previous_confidence = (
-                previous_keypoint.confidence
-            )
-
-            current_confidence = (
-                current_keypoint.confidence
-            )
+            if previous_point is None or current_point is None:
+                continue
 
             if (
-                previous_confidence
-                < self.confidence_threshold
-                or current_confidence
-                < self.confidence_threshold
+                not previous_point.is_valid(self.confidence_threshold)
+                or not current_point.is_valid(self.confidence_threshold)
             ):
                 continue
 
-            dx = (
-                current_keypoint.x
-                - previous_keypoint.x
+            velocity[index] = (
+                (current_point.x - previous_point.x) / delta_time,
+                (current_point.y - previous_point.y) / delta_time,
             )
-
-            dy = (
-                current_keypoint.y
-                - previous_keypoint.y
-            )
-
-            velocity[index, 0] = (
-                dx / delta_time
-            )
-
-            velocity[index, 1] = (
-                dy / delta_time
-            )
-
             valid_mask[index] = True
 
-        speed = np.linalg.norm(
-            velocity,
-            axis=1,
-        ).astype(
-            np.float32
-        )
+        speed = np.linalg.norm(velocity, axis=1).astype(np.float32)
 
         return VelocityFeatures(
             velocity=velocity,
             speed=speed,
             valid_mask=valid_mask,
+            keypoint_types=self.keypoint_order,
         )
 
-    # =====================================================
-    # Validation
-    # =====================================================
+    @staticmethod
+    def _index_keypoints(observation: TrackedSkeleton):
+        result = {}
+        for keypoint in observation.skeleton.keypoints:
+            if keypoint.keypoint_type in result:
+                raise ValueError(
+                    f"Duplicate keypoint type: {keypoint.keypoint_type.value}."
+                )
+            result[keypoint.keypoint_type] = keypoint
+        return result
 
+    @staticmethod
     def _validate_inputs(
-        self,
         previous: TrackedSkeleton,
         current: TrackedSkeleton,
         delta_time: float,
     ) -> None:
-        """
-        Validate temporal velocity inputs.
-        """
-
         if previous.track_id != current.track_id:
             raise ValueError(
                 "Track ID mismatch: "
-                f"previous={previous.track_id}, "
-                f"current={current.track_id}"
+                f"previous={previous.track_id}, current={current.track_id}"
             )
 
-        if delta_time <= 0.0:
-            raise ValueError(
-                "delta_time must be greater than zero."
-            )
-
-        previous_count = len(
-            previous.skeleton.keypoints
-        )
-
-        current_count = len(
-            current.skeleton.keypoints
-        )
-
-        if previous_count != current_count:
-            raise ValueError(
-                "Skeleton keypoint count mismatch: "
-                f"previous={previous_count}, "
-                f"current={current_count}"
-            )
+        if isinstance(delta_time, bool) or not isinstance(delta_time, (int, float)):
+            raise ValueError("delta_time must be a finite positive number.")
+        if not math.isfinite(float(delta_time)) or delta_time <= 0.0:
+            raise ValueError("delta_time must be a finite positive number.")
