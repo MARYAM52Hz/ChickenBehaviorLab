@@ -3,13 +3,13 @@
 import numpy as np
 
 from chicken_behavior_lab.core.enums.keypoints import KeypointType
+from chicken_behavior_lab.features.motion import MotionFeatureExtractor
+from chicken_behavior_lab.features.position import PositionFeatureExtractor
+from chicken_behavior_lab.features.temporal_features import TemporalFeatureBuilder
+from chicken_behavior_lab.features.velocity import VelocityFeatureExtractor
 from chicken_behavior_lab.models.keypoint import Keypoint
 from chicken_behavior_lab.models.skeleton import Skeleton
 from chicken_behavior_lab.models.tracked_skeleton import TrackedSkeleton
-from chicken_behavior_lab.features.position import PositionFeatureExtractor
-from chicken_behavior_lab.features.velocity import VelocityFeatureExtractor
-from chicken_behavior_lab.features.motion import MotionFeatureExtractor
-from chicken_behavior_lab.features.temporal_features import TemporalFeatureBuilder
 
 
 def make_observation(frame_id, points):
@@ -66,7 +66,6 @@ def test_velocity_matches_keypoints_by_type_when_input_order_changes():
     current = make_observation(
         "frame_2",
         [
-            # Deliberately reversed order.
             (KeypointType.HEAD, 12.0, 24.0, 0.9),
             (KeypointType.BEAK, 4.0, 8.0, 0.9),
         ],
@@ -92,9 +91,9 @@ def test_missing_keypoint_is_zero_filled_and_masked():
     result = PositionFeatureExtractor().extract(observation)
 
     assert result.coordinates[0].tolist() == [0.0, 0.0]
-    assert result.valid_mask[0] is np.False_
+    assert not result.valid_mask[0]
     assert result.coordinates[1].tolist() == [10.0, 20.0]
-    assert result.valid_mask[1] is np.True_
+    assert result.valid_mask[1]
 
 
 def test_motion_and_temporal_builder_preserve_explicit_keypoint_mask():
@@ -109,13 +108,11 @@ def test_motion_and_temporal_builder_preserve_explicit_keypoint_mask():
         "frame_2",
         [
             (KeypointType.HEAD, 11.0, 21.0, 0.9),
-            # BEAK absent in this observation.
         ],
     )
     third = make_observation(
         "frame_3",
         [
-            (KeypointType.BEAK, 3.0, 4.0, 0.9),
             (KeypointType.HEAD, 12.0, 22.0, 0.9),
         ],
     )
@@ -131,7 +128,7 @@ def test_motion_and_temporal_builder_preserve_explicit_keypoint_mask():
     )
 
     assert sequence.keypoint_mask.shape == (2, len(KeypointType))
-    assert not sequence.keypoint_mask[1, 0]  # BEAK was absent in current frame.
-    assert sequence.keypoint_mask[1, 1]      # HEAD was observed.
+    assert not sequence.keypoint_mask[1, 0]
+    assert sequence.keypoint_mask[1, 1]
     assert not sequence.frame_mask[0]
     assert sequence.frame_mask[1]
