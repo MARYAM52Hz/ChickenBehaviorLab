@@ -139,8 +139,8 @@ def test_normalizer_can_be_fitted():
     ]
 
     normalizer = MotionFeatureNormalizer(
-        reference_keypoint=0,
-        scale_keypoints=(0, 1),
+        reference_keypoint=KeypointType.BODY_CENTER,
+        scale_keypoints=(KeypointType.LEFT_HIP, KeypointType.RIGHT_HIP),
     )
 
     normalizer.fit(
