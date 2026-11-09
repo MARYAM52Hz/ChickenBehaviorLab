@@ -66,3 +66,13 @@ def test_fit_rejects_sequences_without_valid_motion_rows():
 def test_normalizer_requires_fit_before_transform():
     with pytest.raises(RuntimeError, match="must be fitted"):
         MotionFeatureNormalizer().transform(make_sequence())
+
+
+def test_fit_excludes_frames_without_required_body_landmarks():
+    sequence = make_sequence()
+    left = tuple(KeypointType).index(KeypointType.LEFT_HIP)
+    sequence.keypoint_mask[0, left] = False
+    sequence.features[0, :, 2:4] = 1000.0
+    normalizer = MotionFeatureNormalizer()
+    normalizer.fit([sequence])
+    np.testing.assert_allclose(normalizer.statistics.velocity_mean, [1.0, 2.0])
