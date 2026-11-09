@@ -34,6 +34,7 @@ jobs:
           tests/test_motion_features.py
           tests/test_temporal_features.py
           tests/test_canonical_motion_features.py
+          tests/test_motion_normalization.py
           tests/test_tracker.py
           tests/test_joint_angle_features.py
           tests/test_lightweight_model_imports.py
