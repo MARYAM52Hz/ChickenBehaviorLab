@@ -216,3 +216,34 @@ def test_feature_store_frame_slice(
         sliced.features,
         sequence.features[1:3],
     )
+
+
+def test_feature_store_supports_string_tracker_ids(tmp_path):
+    store = FeatureStore(tmp_path)
+    sequence = create_sequence()
+    path = store.save("video_001", "track_abc", sequence)
+    assert path.name == "track_abc.npz"
+    loaded = store.load("video_001", "track_abc")
+    assert np.array_equal(loaded.features, sequence.features)
+    assert store.exists("video_001", "track_abc")
+    store.delete("video_001", "track_abc")
+    assert not store.exists("video_001", "track_abc")
+
+
+def test_feature_store_rejects_path_traversal_identifiers(tmp_path):
+    store = FeatureStore(tmp_path)
+    sequence = create_sequence()
+    for video_id, track_id in [("../outside", 1), ("video_001", "../outside")]:
+        try:
+            store.save(video_id, track_id, sequence)
+            assert False, "Expected unsafe identifiers to be rejected."
+        except ValueError:
+            pass
+
+
+def test_feature_store_accepts_string_frame_ids_for_slicing(tmp_path):
+    store = FeatureStore(tmp_path)
+    sequence = create_sequence()
+    store.save("video_001", "track_1", sequence)
+    sliced = store.load("video_001", "track_1", start_frame="101", end_frame="102")
+    assert sliced.frame_ids == ("101", "102")
