@@ -176,3 +176,22 @@ def test_velocity_shape_mismatch_raises_error():
         assert "Velocity shape mismatch" in str(
             error
         )
+
+
+def test_non_finite_velocity_is_masked_instead_of_propagated():
+    previous = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
+    current = np.array([[2.0, 3.0], [np.nan, 5.0]], dtype=np.float32)
+    result = AccelerationFeatureExtractor().extract(previous, current, 1.0)
+    assert result.valid_mask.tolist() == [True, False]
+    assert np.allclose(result.acceleration[0], [1.0, 1.0])
+    assert np.allclose(result.acceleration[1], [0.0, 0.0])
+    assert np.isfinite(result.acceleration).all()
+
+
+def test_non_finite_delta_time_is_rejected():
+    velocity = np.array([[1.0, 2.0]], dtype=np.float32)
+    try:
+        AccelerationFeatureExtractor().extract(velocity, velocity, float("inf"))
+        assert False, "Expected a non-finite delta_time to raise ValueError."
+    except ValueError as error:
+        assert "delta_time" in str(error)
