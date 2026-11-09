@@ -37,6 +37,9 @@ jobs:
           tests/test_motion_normalization.py
           tests/test_feature_store.py
           tests/normalization.py
+          tests/test_graph.py
+          tests/test_temporal_graph_builder.py
+          tests/test_spatiotemporal_graph_builder.py
           tests/test_tracker.py
           tests/test_joint_angle_features.py
           tests/test_lightweight_model_imports.py
