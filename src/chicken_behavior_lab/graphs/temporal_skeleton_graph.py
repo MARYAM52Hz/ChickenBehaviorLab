@@ -7,98 +7,35 @@ import numpy as np
 
 @dataclass(slots=True)
 class TemporalSkeletonGraph:
-    """
-    Temporal skeleton graph representation.
-
-    Parameters
-    ----------
-    node_features:
-        Array containing node features.
-
-        Shape:
-            (T, V, F)
-
-        T = number of frames
-        V = number of keypoints
-        F = number of node features
-
-    edge_index:
-        Graph connectivity.
-
-        Shape:
-            (2, E)
-
-        E = number of edges
-
-    edge_features:
-        Edge attributes.
-
-        Shape:
-            (T, E, D)
-
-        D = number of edge features
-
-    frame_ids:
-        Frame identifiers.
-    """
+    """Temporal skeleton graph with explicit frame and node validity masks."""
 
     node_features: np.ndarray
     edge_index: np.ndarray
     edge_features: np.ndarray
     frame_ids: tuple[str, ...]
+    frame_mask: np.ndarray | None = None
+    node_mask: np.ndarray | None = None
 
     def validate(self) -> None:
-        """Validate graph dimensions."""
-
         if self.node_features.ndim != 3:
-            raise ValueError(
-                "node_features must have shape "
-                "(T, V, F)."
-            )
-
-        if self.edge_index.ndim != 2:
-            raise ValueError(
-                "edge_index must have shape "
-                "(2, E)."
-            )
-
-        if self.edge_index.shape[0] != 2:
-            raise ValueError(
-                "edge_index must have shape "
-                "(2, E)."
-            )
-
+            raise ValueError("node_features must have shape (T, V, F).")
+        if self.edge_index.ndim != 2 or self.edge_index.shape[0] != 2:
+            raise ValueError("edge_index must have shape (2, E).")
         if self.edge_features.ndim != 3:
-            raise ValueError(
-                "edge_features must have shape "
-                "(T, E, D)."
-            )
+            raise ValueError("edge_features must have shape (T, E, D).")
 
-        num_frames = (
-            self.node_features.shape[0]
-        )
-
-        num_edges = (
-            self.edge_index.shape[1]
-        )
-
-        if self.edge_features.shape[0] != num_frames:
-            raise ValueError(
-                "edge_features and node_features "
-                "must contain the same number of frames."
-            )
-
-        if self.edge_features.shape[1] != num_edges:
-            raise ValueError(
-                "edge_features and edge_index "
-                "must contain the same number of edges."
-            )
-
+        num_frames, num_nodes, _ = self.node_features.shape
+        num_edges = self.edge_index.shape[1]
+        if self.edge_features.shape[:2] != (num_frames, num_edges):
+            raise ValueError("edge_features must have shape (T, E, D).")
         if len(self.frame_ids) != num_frames:
-            raise ValueError(
-                "frame_ids length must match "
-                "the number of frames."
-            )
+            raise ValueError("frame_ids length must match the number of frames.")
+        if self.frame_mask is not None and self.frame_mask.shape != (num_frames,):
+            raise ValueError("frame_mask must have shape (T,).")
+        if self.node_mask is not None and self.node_mask.shape != (num_frames, num_nodes):
+            raise ValueError("node_mask must have shape (T, V).")
+        if num_edges and (np.any(self.edge_index < 0) or np.any(self.edge_index >= num_nodes)):
+            raise ValueError("edge_index contains an invalid node.")
 
     @property
     def num_frames(self) -> int:
