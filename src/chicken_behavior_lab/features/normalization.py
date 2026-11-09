@@ -1,77 +1,33 @@
-"""
-ChickenBehaviorLab Feature Normalization
-========================================
+"""Normalize pose-based motion features while preserving missing-data masks.
 
-Normalization utilities for pose-based motion features.
-
-The normalization pipeline is designed to:
-
-1. Reduce dependency on absolute image coordinates.
-2. Normalize spatial features relative to the chicken body.
-3. Normalize motion features using training-set statistics.
-4. Preserve missing-data masks.
-5. Prevent data leakage between training and validation/test sets.
-
-Input representation:
-
-    T × V × F
-
-Expected feature order:
-
-    [x, y, vx, vy, ax, ay, confidence]
+Input representation is T × V × F with feature order
+[x, y, vx, vy, ax, ay, confidence]. Statistics must be fitted on training data only.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
+from numbers import Integral, Real
 
 import numpy as np
 
-from chicken_behavior_lab.features.temporal_features import (
-    TemporalFeatureSequence,
-)
+from chicken_behavior_lab.core.enums.keypoints import KeypointType
+from chicken_behavior_lab.features.temporal_features import TemporalFeatureSequence
 
 
 @dataclass(slots=True)
 class NormalizationStatistics:
-    """
-    Statistics learned from the training dataset.
-
-    Attributes
-    ----------
-    velocity_mean:
-        Mean velocity for x/y dimensions.
-
-    velocity_std:
-        Standard deviation of velocity.
-
-    acceleration_mean:
-        Mean acceleration for x/y dimensions.
-
-    acceleration_std:
-        Standard deviation of acceleration.
-    """
+    """Training-set statistics for velocity and acceleration."""
 
     velocity_mean: np.ndarray
-
     velocity_std: np.ndarray
-
     acceleration_mean: np.ndarray
-
     acceleration_std: np.ndarray
 
 
 class MotionFeatureNormalizer:
-    """
-    Normalize temporal motion feature sequences.
-
-    The normalizer separates geometric normalization
-    from statistical normalization.
-
-    Spatial coordinates are converted to a body-centered
-    representation, while velocity and acceleration are
-    standardized using statistics learned from training data.
-    """
+    """Body-center and body-scale normalize motion features in canonical node order."""
 
     FEATURE_X = 0
     FEATURE_Y = 1
@@ -83,402 +39,135 @@ class MotionFeatureNormalizer:
 
     def __init__(
         self,
-        reference_keypoint: int = 0,
-        scale_keypoints: tuple[int, int] = (0, 1),
+        reference_keypoint: int | KeypointType = KeypointType.BODY_CENTER,
+        scale_keypoints: tuple[int | KeypointType, int | KeypointType] = (
+            KeypointType.LEFT_HIP, KeypointType.RIGHT_HIP
+        ),
         epsilon: float = 1e-6,
+        keypoint_order: tuple[KeypointType, ...] | None = None,
     ) -> None:
-        """
-        Parameters
-        ----------
-        reference_keypoint:
-            Keypoint used as the body-centered reference.
+        if isinstance(epsilon, bool) or not isinstance(epsilon, Real) or not math.isfinite(float(epsilon)) or epsilon <= 0:
+            raise ValueError("epsilon must be a finite positive number.")
+        self.keypoint_order = tuple(KeypointType) if keypoint_order is None else tuple(keypoint_order)
+        if not self.keypoint_order or any(not isinstance(item, KeypointType) for item in self.keypoint_order):
+            raise ValueError("keypoint_order must contain KeypointType values.")
+        if len(set(self.keypoint_order)) != len(self.keypoint_order):
+            raise ValueError("keypoint_order must contain unique keypoint types.")
+        self.reference_keypoint = self._resolve_index(reference_keypoint)
+        if len(scale_keypoints) != 2:
+            raise ValueError("scale_keypoints must contain exactly two keypoints.")
+        self.scale_keypoints = tuple(self._resolve_index(item) for item in scale_keypoints)
+        if len({self.reference_keypoint, *self.scale_keypoints}) < 2:
+            raise ValueError("Reference and scale keypoints must not all be identical.")
+        self.epsilon = float(epsilon)
+        self.statistics: NormalizationStatistics | None = None
 
-        scale_keypoints:
-            Two keypoints used to estimate body scale.
+    def _resolve_index(self, keypoint: int | KeypointType) -> int:
+        if isinstance(keypoint, KeypointType):
+            if keypoint not in self.keypoint_order:
+                raise ValueError(f"{keypoint.value} is not present in keypoint_order.")
+            return self.keypoint_order.index(keypoint)
+        if isinstance(keypoint, bool) or not isinstance(keypoint, Integral):
+            raise TypeError("Keypoint references must be KeypointType values or integer indices.")
+        index = int(keypoint)
+        if index < 0 or index >= len(self.keypoint_order):
+            raise ValueError("Keypoint index is outside keypoint_order.")
+        return index
 
-        epsilon:
-            Small value used to avoid division by zero.
-        """
+    @staticmethod
+    def _validate_sequence(sequence: TemporalFeatureSequence) -> None:
+        if sequence.features.ndim != 3 or sequence.features.shape[2] < 7:
+            raise ValueError("features must have shape (T, V, F) with F >= 7.")
+        expected_mask_shape = sequence.features.shape[:2]
+        if sequence.frame_mask.shape != (sequence.features.shape[0],):
+            raise ValueError("frame_mask shape does not match the temporal dimension.")
+        if sequence.keypoint_mask.shape != expected_mask_shape:
+            raise ValueError("keypoint_mask shape does not match (T, V).")
+        if len(sequence.frame_ids) != sequence.features.shape[0]:
+            raise ValueError("frame_ids length does not match the temporal dimension.")
 
-        self.reference_keypoint = (
-            reference_keypoint
-        )
-
-        self.scale_keypoints = (
-            scale_keypoints
-        )
-
-        self.epsilon = epsilon
-
-        self.statistics: (
-            NormalizationStatistics | None
-        ) = None
-
-    # =====================================================
-    # Fit
-    # =====================================================
-
-    def fit(
-        self,
-        sequences: list[
-            TemporalFeatureSequence
-        ],
-    ) -> None:
-        """
-        Learn normalization statistics from training
-        sequences only.
-
-        This method must NEVER be fitted on validation
-        or test data.
-        """
-
+    def fit(self, sequences: list[TemporalFeatureSequence]) -> None:
+        """Learn statistics from training sequences only; masked/non-finite rows are excluded."""
         if not sequences:
+            raise ValueError("sequences cannot be empty.")
 
-            raise ValueError(
-                "sequences cannot be empty."
-            )
-
-        velocities = []
-        accelerations = []
-
+        velocity_rows = []
+        acceleration_rows = []
         for sequence in sequences:
+            self._validate_sequence(sequence)
+            if sequence.num_keypoints != len(self.keypoint_order):
+                raise ValueError("Sequence keypoint dimension does not match keypoint_order.")
+            valid = sequence.keypoint_mask & sequence.frame_mask[:, None]
+            valid &= np.all(np.isfinite(sequence.features[:, :, :7]), axis=2)
+            if valid.any():
+                velocity_rows.append(sequence.features[:, :, self.FEATURE_VX:self.FEATURE_VY + 1][valid])
+                acceleration_rows.append(sequence.features[:, :, self.FEATURE_AX:self.FEATURE_AY + 1][valid])
 
-            features = sequence.features
+        if not velocity_rows:
+            raise ValueError("No valid motion feature rows are available for fitting.")
 
-            valid = (
-                sequence.keypoint_mask
-                & sequence.frame_mask[:, None]
-            )
-
-            velocity = features[
-                :, :, self.FEATURE_VX:
-                self.FEATURE_VY + 1
-            ]
-
-            acceleration = features[
-                :, :, self.FEATURE_AX:
-                self.FEATURE_AY + 1
-            ]
-
-            velocity_valid = valid[
-                :, :, None
-            ]
-
-            acceleration_valid = valid[
-                :, :, None
-            ]
-
-            velocity = np.where(
-                velocity_valid,
-                velocity,
-                np.nan,
-            )
-
-            acceleration = np.where(
-                acceleration_valid,
-                acceleration,
-                np.nan,
-            )
-
-            velocities.append(
-                velocity.reshape(
-                    -1,
-                    2,
-                )
-            )
-
-            accelerations.append(
-                acceleration.reshape(
-                    -1,
-                    2,
-                )
-            )
-
-        velocity_values = np.concatenate(
-            velocities,
-            axis=0,
+        velocity = np.concatenate(velocity_rows, axis=0).astype(np.float64)
+        acceleration = np.concatenate(acceleration_rows, axis=0).astype(np.float64)
+        velocity_mean = velocity.mean(axis=0)
+        velocity_std = np.maximum(velocity.std(axis=0), self.epsilon)
+        acceleration_mean = acceleration.mean(axis=0)
+        acceleration_std = np.maximum(acceleration.std(axis=0), self.epsilon)
+        self.statistics = NormalizationStatistics(
+            velocity_mean=velocity_mean.astype(np.float32),
+            velocity_std=velocity_std.astype(np.float32),
+            acceleration_mean=acceleration_mean.astype(np.float32),
+            acceleration_std=acceleration_std.astype(np.float32),
         )
 
-        acceleration_values = np.concatenate(
-            accelerations,
-            axis=0,
-        )
-
-        velocity_mean = np.nanmean(
-            velocity_values,
-            axis=0,
-        )
-
-        velocity_std = np.nanstd(
-            velocity_values,
-            axis=0,
-        )
-
-        acceleration_mean = np.nanmean(
-            acceleration_values,
-            axis=0,
-        )
-
-        acceleration_std = np.nanstd(
-            acceleration_values,
-            axis=0,
-        )
-
-        velocity_std = np.maximum(
-            velocity_std,
-            self.epsilon,
-        )
-
-        acceleration_std = np.maximum(
-            acceleration_std,
-            self.epsilon,
-        )
-
-        self.statistics = (
-            NormalizationStatistics(
-                velocity_mean=velocity_mean.astype(
-                    np.float32
-                ),
-                velocity_std=velocity_std.astype(
-                    np.float32
-                ),
-                acceleration_mean=(
-                    acceleration_mean.astype(
-                        np.float32
-                    )
-                ),
-                acceleration_std=(
-                    acceleration_std.astype(
-                        np.float32
-                    )
-                ),
-            )
-        )
-
-    # =====================================================
-    # Transform
-    # =====================================================
-
-    def transform(
-        self,
-        sequence: TemporalFeatureSequence,
-    ) -> TemporalFeatureSequence:
-        """
-        Normalize a temporal feature sequence.
-
-        The normalizer must be fitted before calling this
-        method.
-        """
-
+    def transform(self, sequence: TemporalFeatureSequence) -> TemporalFeatureSequence:
+        """Normalize one sequence; frames lacking required body landmarks are masked."""
         if self.statistics is None:
+            raise RuntimeError("Normalizer must be fitted before calling transform().")
+        self._validate_sequence(sequence)
+        if sequence.num_keypoints != len(self.keypoint_order):
+            raise ValueError("Sequence keypoint dimension does not match keypoint_order.")
 
-            raise RuntimeError(
-                "Normalizer must be fitted "
-                "before calling transform()."
-            )
+        features = sequence.features.astype(np.float32, copy=True)
+        valid_mask = sequence.keypoint_mask.copy() & sequence.frame_mask[:, None]
+        valid_mask &= np.all(np.isfinite(features[:, :, :7]), axis=2)
 
-        features = (
-            sequence.features.copy()
+        ref = self.reference_keypoint
+        point_a, point_b = self.scale_keypoints
+        for frame_index in range(sequence.temporal_length):
+            if not sequence.frame_mask[frame_index]:
+                valid_mask[frame_index] = False
+                continue
+            required = (ref, point_a, point_b)
+            if not all(valid_mask[frame_index, index] for index in required):
+                valid_mask[frame_index] = False
+                continue
+            reference_xy = features[frame_index, ref, :2].copy()
+            scale = float(np.linalg.norm(
+                features[frame_index, point_a, :2] - features[frame_index, point_b, :2]
+            ))
+            if not math.isfinite(scale) or scale <= self.epsilon:
+                valid_mask[frame_index] = False
+                continue
+            features[frame_index, :, :2] = (features[frame_index, :, :2] - reference_xy) / scale
+
+        stats = self.statistics
+        features[:, :, self.FEATURE_VX:self.FEATURE_VY + 1] = (
+            features[:, :, self.FEATURE_VX:self.FEATURE_VY + 1] - stats.velocity_mean
+        ) / stats.velocity_std
+        features[:, :, self.FEATURE_AX:self.FEATURE_AY + 1] = (
+            features[:, :, self.FEATURE_AX:self.FEATURE_AY + 1] - stats.acceleration_mean
+        ) / stats.acceleration_std
+        features[:, :, self.FEATURE_CONFIDENCE] = np.clip(
+            features[:, :, self.FEATURE_CONFIDENCE], 0.0, 1.0
         )
-
-        valid_mask = (
-            sequence.keypoint_mask
-            & sequence.frame_mask[:, None]
-        )
-
-        # -------------------------------------------------
-        # Spatial normalization
-        # -------------------------------------------------
-
-        features = (
-            self._normalize_position(
-                features,
-                valid_mask,
-            )
-        )
-
-        # -------------------------------------------------
-        # Velocity normalization
-        # -------------------------------------------------
-
-        velocity = features[
-            :, :, self.FEATURE_VX:
-            self.FEATURE_VY + 1
-        ]
-
-        velocity = (
-            velocity
-            - self.statistics.velocity_mean
-        )
-
-        velocity = (
-            velocity
-            / self.statistics.velocity_std
-        )
-
-        features[
-            :, :, self.FEATURE_VX:
-            self.FEATURE_VY + 1
-        ] = velocity
-
-        # -------------------------------------------------
-        # Acceleration normalization
-        # -------------------------------------------------
-
-        acceleration = features[
-            :, :, self.FEATURE_AX:
-            self.FEATURE_AY + 1
-        ]
-
-        acceleration = (
-            acceleration
-            - self.statistics.acceleration_mean
-        )
-
-        acceleration = (
-            acceleration
-            / self.statistics.acceleration_std
-        )
-
-        features[
-            :, :, self.FEATURE_AX:
-            self.FEATURE_AY + 1
-        ] = acceleration
-
-        # -------------------------------------------------
-        # Confidence
-        # -------------------------------------------------
-
-        features[
-            :, :, self.FEATURE_CONFIDENCE
-        ] = np.clip(
-            features[
-                :, :, self.FEATURE_CONFIDENCE
-            ],
-            0.0,
-            1.0,
-        )
-
-        # -------------------------------------------------
-        # Restore padding
-        # -------------------------------------------------
-
-        features[
-            ~valid_mask
-        ] = 0.0
+        features[~valid_mask] = 0.0
 
         return TemporalFeatureSequence(
-            features=features.astype(
-                np.float32
-            ),
+            features=features,
             frame_mask=sequence.frame_mask.copy(),
-            keypoint_mask=sequence.keypoint_mask.copy(),
+            keypoint_mask=valid_mask,
             frame_ids=sequence.frame_ids,
         )
 
-    # =====================================================
-    # Position normalization
-    # =====================================================
-
-    def _normalize_position(
-        self,
-        features: np.ndarray,
-        valid_mask: np.ndarray,
-    ) -> np.ndarray:
-        """
-        Convert absolute image coordinates into
-        body-centered and scale-normalized coordinates.
-        """
-
-        output = features.copy()
-
-        reference = (
-            self.reference_keypoint
-        )
-
-        keypoint_a, keypoint_b = (
-            self.scale_keypoints
-        )
-
-        reference_xy = output[
-            :,
-            reference,
-            self.FEATURE_X:
-            self.FEATURE_Y + 1,
-        ]
-
-        point_a = output[
-            :,
-            keypoint_a,
-            self.FEATURE_X:
-            self.FEATURE_Y + 1,
-        ]
-
-        point_b = output[
-            :,
-            keypoint_b,
-            self.FEATURE_X:
-            self.FEATURE_Y + 1,
-        ]
-
-        scale = np.linalg.norm(
-            point_a - point_b,
-            axis=-1,
-        )
-
-        scale = np.maximum(
-            scale,
-            self.epsilon,
-        )
-
-        centered = (
-            output[
-                :,
-                :,
-                self.FEATURE_X:
-                self.FEATURE_Y + 1,
-            ]
-            - reference_xy[:, None, :]
-        )
-
-        normalized = (
-            centered
-            / scale[:, None, None]
-        )
-
-        output[
-            :,
-            :,
-            self.FEATURE_X:
-            self.FEATURE_Y + 1,
-        ] = normalized
-
-        output[
-            :,
-            :,
-            self.FEATURE_X:
-            self.FEATURE_Y + 1,
-        ] = np.where(
-            valid_mask[:, :, None],
-            output[
-                :,
-                :,
-                self.FEATURE_X:
-                self.FEATURE_Y + 1,
-            ],
-            0.0,
-        )
-
-        return output
-
-    # =====================================================
-    # Inverse transform
-    # =====================================================
-
     def is_fitted(self) -> bool:
-        """
-        Return True when normalization statistics
-        have been learned.
-        """
-
         return self.statistics is not None
