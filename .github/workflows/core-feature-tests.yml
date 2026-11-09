@@ -35,6 +35,7 @@ jobs:
           tests/test_temporal_features.py
           tests/test_canonical_motion_features.py
           tests/test_motion_normalization.py
+          tests/test_motion_pipeline_integration.py
           tests/test_feature_store.py
           tests/normalization.py
           tests/test_graph.py
