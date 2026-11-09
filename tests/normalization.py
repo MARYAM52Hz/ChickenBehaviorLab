@@ -76,7 +76,7 @@ def create_motion_frame(
 def create_sequence(
     value: float,
     temporal_length: int = 5,
-    num_keypoints: int = 3,
+    num_keypoints: int = len(KeypointType),
 ) -> TemporalFeatureSequence:
     """
     Create a synthetic temporal sequence.
