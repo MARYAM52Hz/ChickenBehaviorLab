@@ -5,6 +5,8 @@ Tests for ChickenBehaviorLab feature normalization.
 import numpy as np
 import pytest
 
+from chicken_behavior_lab.core.enums.keypoints import KeypointType
+
 from chicken_behavior_lab.features.motion import (
     MotionFeatureFrame,
 )
@@ -24,7 +26,7 @@ from chicken_behavior_lab.features.normalization import (
 
 def create_motion_frame(
     value: float,
-    num_keypoints: int = 3,
+    num_keypoints: int = len(KeypointType),
 ) -> MotionFeatureFrame:
     """
     Create a synthetic MotionFeatureFrame for testing.
@@ -102,6 +104,14 @@ def create_sequence(
         ),
         dtype=bool,
     )
+
+    if num_keypoints == len(KeypointType):
+        center = tuple(KeypointType).index(KeypointType.BODY_CENTER)
+        left = tuple(KeypointType).index(KeypointType.LEFT_HIP)
+        right = tuple(KeypointType).index(KeypointType.RIGHT_HIP)
+        features[:, center, :2] = (value, value)
+        features[:, left, :2] = (value - 1.0, value)
+        features[:, right, :2] = (value + 1.0, value)
 
     return TemporalFeatureSequence(
         features=features,
