@@ -99,6 +99,22 @@ class MotionFeatureNormalizer:
                 raise ValueError("Sequence keypoint dimension does not match keypoint_order.")
             valid = sequence.keypoint_mask & sequence.frame_mask[:, None]
             valid &= np.all(np.isfinite(sequence.features[:, :, :7]), axis=2)
+            reference = self.reference_keypoint
+            point_a, point_b = self.scale_keypoints
+            for frame_index in range(sequence.temporal_length):
+                if not sequence.frame_mask[frame_index]:
+                    valid[frame_index] = False
+                    continue
+                required = (reference, point_a, point_b)
+                if not all(valid[frame_index, index] for index in required):
+                    valid[frame_index] = False
+                    continue
+                scale = float(np.linalg.norm(
+                    sequence.features[frame_index, point_a, :2]
+                    - sequence.features[frame_index, point_b, :2]
+                ))
+                if not math.isfinite(scale) or scale <= self.epsilon:
+                    valid[frame_index] = False
             if valid.any():
                 velocity_rows.append(sequence.features[:, :, self.FEATURE_VX:self.FEATURE_VY + 1][valid])
                 acceleration_rows.append(sequence.features[:, :, self.FEATURE_AX:self.FEATURE_AY + 1][valid])
