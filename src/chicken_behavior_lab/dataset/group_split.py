@@ -374,3 +374,85 @@ class GroupAwareSplitter:
             raise ValueError(
                 "Test split is empty."
             )
+
+
+@dataclass(slots=True, frozen=True)
+class SplitGroups:
+    """Disjoint train, validation, and test group identifiers."""
+
+    train: tuple[str, ...]
+    validation: tuple[str, ...]
+    test: tuple[str, ...]
+
+    def validate(self) -> None:
+        train = set(self.train)
+        validation = set(self.validation)
+        test = set(self.test)
+        if train & validation or train & test or validation & test:
+            raise ValueError("Group splits must be disjoint.")
+        if not train or not validation or not test:
+            raise ValueError("Train, validation, and test groups must all be non-empty.")
+
+
+def build_group_id(sample, group_by: str = "video") -> str:
+    """Build a stable split identity from a sample's metadata.
+
+    Track IDs are qualified by video ID because tracker counters are commonly
+    reset for each video; track_1 in two videos denotes two individuals.
+    """
+    metadata = getattr(sample, "metadata", None) or {}
+    if group_by in {"video", "video_id"}:
+        video_id = metadata.get("video_id")
+        if video_id is None or not str(video_id).strip():
+            raise ValueError(f"Sample {getattr(sample, 'sample_id', '<unknown>')!r} has no video_id.")
+        return str(video_id)
+
+    if group_by in {"track", "track_id"}:
+        video_id = metadata.get("video_id")
+        track_id = metadata.get("track_id")
+        if video_id is None or not str(video_id).strip():
+            raise ValueError("Track-level splitting requires metadata.video_id.")
+        if track_id is None:
+            raise ValueError("Track-level splitting requires metadata.track_id.")
+        return f"{video_id}::track::{normalize_track_id(track_id)}"
+
+    raise ValueError("group_by must be 'video'/'video_id' or 'track'/'track_id'.")
+
+
+def split_group_ids(
+    groups: Sequence[str],
+    *,
+    train_ratio: float = 0.70,
+    validation_ratio: float = 0.15,
+    test_ratio: float = 0.15,
+    seed: int = 42,
+) -> SplitGroups:
+    """Deterministically divide unique group IDs without splitting a group."""
+    ratios = (train_ratio, validation_ratio, test_ratio)
+    if any(isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0 for value in ratios):
+        raise ValueError("All split ratios must be positive numbers.")
+    if abs(sum(ratios) - 1.0) > 1e-8:
+        raise ValueError("train_ratio + validation_ratio + test_ratio must equal 1.0.")
+
+    unique = sorted({str(group) for group in groups})
+    if len(unique) < 3:
+        raise ValueError("At least three distinct groups are required for splitting.")
+
+    import random
+
+    shuffled = list(unique)
+    random.Random(seed).shuffle(shuffled)
+    n_groups = len(shuffled)
+    n_train = max(1, int(n_groups * train_ratio))
+    n_validation = max(1, int(n_groups * validation_ratio))
+    if n_train + n_validation >= n_groups:
+        n_train = n_groups - 2
+        n_validation = 1
+
+    result = SplitGroups(
+        train=tuple(sorted(shuffled[:n_train])),
+        validation=tuple(sorted(shuffled[n_train:n_train + n_validation])),
+        test=tuple(sorted(shuffled[n_train + n_validation:])),
+    )
+    result.validate()
+    return result
