@@ -5,6 +5,8 @@ from typing import Any
 
 import torch
 from torch import nn
+
+from chicken_behavior_lab.core.identifiers import normalize_track_id
 from torch.utils.data import DataLoader
 
 
@@ -20,7 +22,7 @@ class RawPredictionRecord:
 
     sample_id: str
     video_id: str
-    track_id: int
+    track_id: str | None
     start_frame: int
     end_frame: int
     true_index: int
@@ -38,10 +40,9 @@ class RawPredictionRecord:
                 "video_id cannot be empty."
             )
 
-        if self.track_id < 0:
-            raise ValueError(
-                "track_id cannot be negative."
-            )
+        if self.track_id is not None:
+            if normalize_track_id(self.track_id) != self.track_id:
+                raise ValueError("track_id must use canonical string form.")
 
         if self.start_frame < 0:
             raise ValueError(
@@ -77,7 +78,7 @@ class EvaluationResult:
     y_pred: list[int]
     sample_ids: list[str]
     video_ids: list[str]
-    track_ids: list[int]
+    track_ids: list[str | None]
     prediction_records: list[
         RawPredictionRecord
     ]
@@ -140,7 +141,7 @@ class Evaluator:
 
         sample_ids: list[str] = []
         video_ids: list[str] = []
-        track_ids: list[int] = []
+        track_ids: list[str | None] = []
 
         prediction_records: list[
             RawPredictionRecord
@@ -270,8 +271,9 @@ class Evaluator:
                         video_id=str(
                             batch_video_ids[index]
                         ),
-                        track_id=int(
-                            batch_track_ids[index]
+                        track_id=(
+                            None if batch_track_ids[index] is None
+                            else normalize_track_id(batch_track_ids[index])
                         ),
                         start_frame=int(
                             batch_start_frames[index]
@@ -315,7 +317,7 @@ class Evaluator:
                 )
 
                 track_ids.extend(
-                    int(value)
+                    None if value is None else normalize_track_id(value)
                     for value in batch_track_ids
                 )
 
@@ -349,6 +351,8 @@ class Evaluator:
         """
 
         if values is None:
+            if field_name == "track_id":
+                return [None] * expected_length
             raise ValueError(
                 f"Batch is missing required field: "
                 f"{field_name}"
