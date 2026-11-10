@@ -41,3 +41,7 @@ class BehaviorClassificationLoss:
             logits,
             targets,
         )
+
+
+# Backwards-compatible public name used by training package exports.
+ClassificationLoss = BehaviorClassificationLoss
