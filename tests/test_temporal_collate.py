@@ -153,6 +153,10 @@ def test_temporal_collator():
         "track_1",
         "track_1",
     ]
+    assert len(batch.frame_batches) == 3
+    assert batch.frame_batches[0].num_graphs == 2
+    assert batch.frame_batches[0].x.shape == (6, 2)
+    assert batch.frame_batches[0].edge_attr.shape == (8, 2)
 
     assert batch.start_frame.tolist() == [
         100,
@@ -188,3 +192,5 @@ def test_temporal_batch_to_device():
     assert moved.x.device.type == "cpu"
     assert moved.edge_index.device.type == "cpu"
     assert moved.y.device.type == "cpu"
+    assert moved.frame_batches[0].x.device.type == "cpu"
+    assert moved.track_id == ["track_1"]
