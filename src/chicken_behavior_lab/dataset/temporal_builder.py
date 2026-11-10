@@ -148,7 +148,7 @@ class TemporalSequenceBuilder:
     ]:
 
         groups: dict[
-            tuple[str, int],
+            tuple[str, str],
             list[GraphSample],
         ] = defaultdict(list)
 
