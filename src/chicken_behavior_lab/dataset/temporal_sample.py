@@ -277,6 +277,19 @@ class TemporalGraphSample:
     def sequence_length(self) -> int:
         return len(self.graphs)
 
+    @property
+    def samples(self) -> list[GraphSample]:
+        """Backward-compatible alias for the graph samples in this window."""
+        return self.graphs
+
+    @property
+    def start_frame(self) -> int:
+        return self.first_frame
+
+    @property
+    def end_frame(self) -> int:
+        return self.last_frame
+
     def get_metadata(
         self,
         key: str,
