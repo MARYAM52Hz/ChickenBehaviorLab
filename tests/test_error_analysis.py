@@ -63,6 +63,7 @@ def test_prediction_record_correctness():
 
     assert prediction.is_correct
     assert not prediction.is_error
+    assert prediction.track_id == "track_1"
 
 
 def test_prediction_record_error():
@@ -210,5 +211,6 @@ def test_save_and_load_json(tmp_path):
     )
 
     assert len(loaded) == 4
+    assert loaded.predictions[0].track_id == "track_1"
     assert loaded.accuracy() == 0.5
     assert len(loaded.errors) == 2
