@@ -1,9 +1,6 @@
 name: PyTorch and temporal GNN integration tests
 
 on:
-  push:
-    branches:
-      - audit/foundation-repair
   pull_request:
     branches:
       - main
