@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from chicken_behavior_lab.models.detection import (
     Detection,
 )
+from chicken_behavior_lab.core.identifiers import normalize_track_id
 
 
 @dataclass(slots=True)
@@ -61,6 +62,7 @@ class Track:
     )
 
     def __post_init__(self) -> None:
+        self.track_id = normalize_track_id(self.track_id)
         """
         Initialize the detection history.
 
