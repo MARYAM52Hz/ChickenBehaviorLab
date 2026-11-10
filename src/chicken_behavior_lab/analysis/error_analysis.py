@@ -23,6 +23,10 @@ class PredictionRecord:
     predicted_behavior: str
     confidence: float
 
+    def __post_init__(self) -> None:
+        if self.track_id is not None:
+            object.__setattr__(self, "track_id", normalize_track_id(self.track_id))
+
     @property
     def is_correct(self) -> bool:
         return (
