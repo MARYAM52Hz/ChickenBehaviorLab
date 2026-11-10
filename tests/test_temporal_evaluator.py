@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import torch
 
+from torch_geometric.data import Batch, Data
+
 from chicken_behavior_lab.dataset.temporal_batch import (
     TemporalBatch,
 )
@@ -36,6 +38,17 @@ class DummyTemporalModel(torch.nn.Module):
 
 
 def make_batch() -> TemporalBatch:
+    edge_index = torch.tensor(
+        [[0, 1], [1, 2]],
+        dtype=torch.long,
+    )
+    frame_batches = [
+        Batch.from_data_list([
+            Data(x=torch.randn(13, 8), edge_index=edge_index),
+            Data(x=torch.randn(13, 8), edge_index=edge_index),
+        ])
+        for _ in range(4)
+    ]
     return TemporalBatch(
         x=torch.randn(
             2,
@@ -43,13 +56,7 @@ def make_batch() -> TemporalBatch:
             13,
             8,
         ),
-        edge_index=torch.tensor(
-            [
-                [0, 1],
-                [1, 2],
-            ],
-            dtype=torch.long,
-        ),
+        edge_index=edge_index,
         edge_attr=None,
         y=torch.tensor(
             [0, 1],
@@ -76,6 +83,7 @@ def make_batch() -> TemporalBatch:
             "feeding",
             "walking",
         ],
+        frame_batches=frame_batches,
     )
 
 
