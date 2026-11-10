@@ -37,6 +37,9 @@ jobs:
           tests/test_motion_normalization.py
           tests/test_motion_pipeline_integration.py
           tests/test_feature_store.py
+          tests/test_track_id_contract.py
+          tests/test_temporal_sample.py
+          tests/test_temporal_split_builder.py
           tests/normalization.py
           tests/test_graph.py
           tests/test_temporal_graph_builder.py
