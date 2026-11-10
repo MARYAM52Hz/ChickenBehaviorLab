@@ -1,7 +1,12 @@
-"""Track identity remains canonical in generated events and analytics."""
+""""Track identity remains canonical in generated events and analytics."""
+
+import pytest
 
 from chicken_behavior_lab.analytics.behavior_analytics import Analytics
+from chicken_behavior_lab.core.enums.behavior import BehaviorType
+from chicken_behavior_lab.core.enums.event import EventType
 from chicken_behavior_lab.events.event_generator import BehaviorEvent, EventGenerator
+from chicken_behavior_lab.models.behavior_event import BehaviorEvent as TransitionBehaviorEvent
 
 
 def test_event_generator_merges_numeric_and_canonical_track_ids():
@@ -35,6 +40,33 @@ def test_behavior_event_canonicalizes_legacy_integer_track_id():
         end_frame=3,
     )
     assert event.track_id == "track_7"
+
+
+def test_transition_event_model_canonicalizes_legacy_track_ids():
+    event = TransitionBehaviorEvent(
+        event_id="event_001",
+        track_id=7,
+        event_type=EventType.BEHAVIOR_STARTED,
+        previous_behavior=BehaviorType.STANDING,
+        current_behavior=BehaviorType.FEEDING,
+        frame_number=10,
+        confidence=0.9,
+    )
+
+    assert event.track_id == "track_7"
+
+
+def test_transition_event_model_rejects_unsafe_track_ids():
+    with pytest.raises(ValueError, match="track_id contains unsupported"):
+        TransitionBehaviorEvent(
+            event_id="event_002",
+            track_id="../bird",
+            event_type=EventType.BEHAVIOR_STARTED,
+            previous_behavior=BehaviorType.STANDING,
+            current_behavior=BehaviorType.FEEDING,
+            frame_number=11,
+            confidence=0.9,
+        )
 
 
 def test_analytics_normalizes_ids_and_does_not_merge_tracks_across_videos():
