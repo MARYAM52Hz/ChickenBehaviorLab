@@ -9,6 +9,8 @@ from dataclasses import asdict, dataclass
 from math import isfinite
 from typing import Any, Iterable, Mapping, Sequence
 
+from chicken_behavior_lab.core.identifiers import normalize_track_id
+
 
 class EventGenerationError(ValueError):
     """Raised when prediction records do not satisfy the event-generation contract."""
@@ -19,7 +21,7 @@ class BehaviorEvent:
     """A predicted behavior interval; start_frame and end_frame are inclusive."""
 
     video_id: str
-    track_id: str | int
+    track_id: str
     behavior_id: str
     start_frame: int
     end_frame: int
@@ -46,6 +48,11 @@ class BehaviorEvent:
             if not isfinite(float(self.confidence)) or not 0.0 <= float(self.confidence) <= 1.0:
                 raise EventGenerationError("confidence must be finite and in [0, 1].")
             object.__setattr__(self, "confidence", float(self.confidence))
+        try:
+            canonical_track_id = normalize_track_id(self.track_id)
+        except (TypeError, ValueError) as exc:
+            raise EventGenerationError(f"Invalid track_id: {exc}") from exc
+        object.__setattr__(self, "track_id", canonical_track_id)
         object.__setattr__(self, "video_id", self.video_id.strip())
         object.__setattr__(self, "behavior_id", self.behavior_id.strip())
         object.__setattr__(self, "source_sample_ids", tuple(str(x) for x in self.source_sample_ids))
@@ -137,7 +144,11 @@ class EventGenerator:
             confidence = float(confidence)
             if confidence < self.minimum_confidence:
                 return None
-        return {"video_id": video_id.strip(), "track_id": track_id, "behavior_id": self._label(record),
+        try:
+            canonical_track_id = normalize_track_id(track_id)
+        except (TypeError, ValueError) as exc:
+            raise EventGenerationError(f"Invalid track_id: {exc}") from exc
+        return {"video_id": video_id.strip(), "track_id": canonical_track_id, "behavior_id": self._label(record),
                 "start_frame": start, "end_frame": end, "confidence": confidence,
                 "sample_id": None if sample_id is None else str(sample_id)}
 
