@@ -39,7 +39,7 @@ jobs:
           tests/test_feature_store.py
           tests/test_track_id_contract.py
           tests/test_temporal_sample.py
-          tests/test_temporal_split_builder.py
+          tests/test_group_splitter_ids.py
           tests/normalization.py
           tests/test_graph.py
           tests/test_temporal_graph_builder.py
