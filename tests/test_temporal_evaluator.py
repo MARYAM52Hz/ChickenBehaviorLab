@@ -63,10 +63,7 @@ def make_batch() -> TemporalBatch:
             "video_001",
             "video_001",
         ],
-        track_id=torch.tensor(
-            [10, 10],
-            dtype=torch.long,
-        ),
+        track_id=["track_10", "track_10"],
         start_frame=torch.tensor(
             [100, 104],
             dtype=torch.long,
@@ -118,7 +115,7 @@ def test_temporal_evaluator() -> None:
 
     assert first.sample_id == "sample_001"
     assert first.video_id == "video_001"
-    assert first.track_id == 10
+    assert first.track_id == "track_10"
     assert first.start_frame == 100
     assert first.end_frame == 103
 
