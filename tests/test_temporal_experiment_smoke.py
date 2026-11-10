@@ -76,10 +76,13 @@ def _make_synthetic_samples() -> list[GraphSample]:
     group_specs = [
         ("video_001", "feeding"),
         ("video_002", "feeding"),
-        ("video_003", "walking"),
+        ("video_003", "feeding"),
         ("video_004", "walking"),
-        ("video_005", "resting"),
-        ("video_006", "resting"),
+        ("video_005", "walking"),
+        ("video_006", "walking"),
+        ("video_007", "resting"),
+        ("video_008", "resting"),
+        ("video_009", "resting"),
     ]
 
     samples: list[GraphSample] = []
@@ -108,10 +111,13 @@ def _make_annotations() -> tuple[AnnotationSet, ...]:
     group_specs = [
         ("video_001", "feeding"),
         ("video_002", "feeding"),
-        ("video_003", "walking"),
+        ("video_003", "feeding"),
         ("video_004", "walking"),
-        ("video_005", "resting"),
-        ("video_006", "resting"),
+        ("video_005", "walking"),
+        ("video_006", "walking"),
+        ("video_007", "resting"),
+        ("video_008", "resting"),
+        ("video_009", "resting"),
     ]
     return tuple(
         AnnotationSet(
@@ -144,7 +150,7 @@ def test_synthetic_fixture_structure() -> None:
 
     samples = _make_synthetic_samples()
 
-    assert len(samples) == 6 * FRAMES_PER_VIDEO
+    assert len(samples) == 9 * FRAMES_PER_VIDEO
 
     video_ids = {
         sample.metadata["video_id"]
@@ -158,6 +164,9 @@ def test_synthetic_fixture_structure() -> None:
         "video_004",
         "video_005",
         "video_006",
+        "video_007",
+        "video_008",
+        "video_009",
     }
 
     behavior_ids = {
@@ -182,7 +191,7 @@ def test_synthetic_fixture_structure() -> None:
             if sample.behavior_id == behavior_id
         }
 
-        assert len(behavior_videos) == 2
+        assert len(behavior_videos) == 3
 
 
 def test_annotation_fixture_structure() -> None:
@@ -190,11 +199,11 @@ def test_annotation_fixture_structure() -> None:
 
     annotation_set = _make_annotations()
 
-    assert len(annotation_set.annotations) == 6
+    assert len(annotation_set) == 9
 
     video_ids = {item.video_id for item in annotation_set}
 
-    assert len(video_ids) == 6
+    assert len(video_ids) == 9
 
     for video_annotations in annotation_set:
         assert len(video_annotations.annotations) == 1
@@ -220,9 +229,9 @@ def test_temporal_experiment_end_to_end(
     config = TemporalExperimentConfig(
         sequence_length=4,
         sequence_stride=4,
-        train_ratio=0.50,
-        validation_ratio=0.25,
-        test_ratio=0.25,
+        train_ratio=0.67,
+        validation_ratio=0.22,
+        test_ratio=0.11,
         group_key="video_id",
         split_seed=42,
         batch_size=2,
@@ -303,6 +312,9 @@ def test_temporal_experiment_end_to_end(
         "video_004",
         "video_005",
         "video_006",
+        "video_007",
+        "video_008",
+        "video_009",
     }
 
     # ---------------------------------------------------------------
