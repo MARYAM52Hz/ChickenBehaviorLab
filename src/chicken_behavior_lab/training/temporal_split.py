@@ -5,6 +5,8 @@ from typing import Sequence
 
 import random
 
+from chicken_behavior_lab.core.identifiers import normalize_track_id
+
 
 @dataclass(slots=True, frozen=True)
 class GroupSplit:
@@ -171,7 +173,7 @@ def group_train_validation_test_split(
 def group_from_sample(
     *,
     video_id: str,
-    track_id: int,
+    track_id: str | int,
     split_group: str,
 ) -> str:
     """
@@ -196,12 +198,7 @@ def group_from_sample(
                 "video_id cannot be empty."
             )
 
-        if track_id < 0:
-            raise ValueError(
-                "track_id cannot be negative."
-            )
-
-        return f"{video_id}::track::{track_id}"
+        return f"{video_id}::track::{normalize_track_id(track_id)}"
 
     raise ValueError(
         "split_group must be either "
