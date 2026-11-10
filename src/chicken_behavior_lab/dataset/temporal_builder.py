@@ -126,12 +126,9 @@ class TemporalSequenceBuilder:
                     )
                 )
 
-        if not temporal_samples:
-            raise ValueError(
-                "No temporal windows could be created. "
-                "Check sequence_length and input samples."
-            )
-
+        # An empty result is meaningful when all candidate windows are
+        # rejected by contiguity/behavior rules. Callers that require data
+        # (such as TemporalExperiment) perform an explicit non-empty check.
         temporal_samples.sort(
             key=lambda sample: (
                 sample.video_id or "",
