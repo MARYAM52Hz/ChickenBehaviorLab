@@ -36,5 +36,6 @@ jobs:
           tests/test_temporal_behavior_gnn.py
           tests/test_temporal_evaluator.py
           tests/test_evaluator_metadata.py
+          tests/test_package_exports.py
           tests/test_pyg_dataset.py
           tests/test_temporal_sample.py
