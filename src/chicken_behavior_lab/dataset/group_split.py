@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Literal, Sequence
 
 from chicken_behavior_lab.dataset.sample import GraphSample
+from chicken_behavior_lab.core.identifiers import normalize_track_id
 
 
 GroupKey = Literal["video_id", "track_id"]
@@ -288,12 +289,11 @@ class GroupAwareSplitter:
                 "video_id"
             )
 
+            canonical_track_id = normalize_track_id(track_id)
             if video_id:
-                return (
-                    f"{video_id}::track::{track_id}"
-                )
+                return f"{video_id}::track::{canonical_track_id}"
 
-            return f"track::{track_id}"
+            return f"track::{canonical_track_id}"
 
         raise ValueError(
             f"Unsupported group_key: {self.group_key}"
