@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Sequence
 
 from chicken_behavior_lab.dataset.sample import GraphSample
+from chicken_behavior_lab.core.identifiers import normalize_track_id
 
 
 @dataclass(slots=True)
@@ -88,10 +89,11 @@ def _group_id(sample: GraphSample, group_key: str) -> str:
 
         # Track identifiers may repeat across videos, so include video_id.
         video_id = metadata.get("video_id")
+        canonical_track_id = normalize_track_id(track_id)
         if video_id is not None and str(video_id).strip():
-            return f"{video_id}::track::{track_id}"
+            return f"{video_id}::track::{canonical_track_id}"
 
-        return str(track_id)
+        return canonical_track_id
 
     raise ValueError("group_key must be either 'video_id' or 'track_id'.")
 
