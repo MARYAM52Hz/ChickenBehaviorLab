@@ -13,6 +13,7 @@ _EXPORTS = {
     "PredictionErrorAnalyzer": (".error_analysis", "PredictionErrorAnalyzer"),
     "FeatureDiagnosticRecord": (".feature_diagnostics", "FeatureDiagnosticRecord"),
     "FeatureDiagnosticAnalyzer": (".feature_diagnostics", "FeatureDiagnosticAnalyzer"),
+    "GraphFeatureDiagnosticExtractor": (".feature_extractor", "GraphFeatureDiagnosticExtractor"),
     "TemporalPredictionError": (".temporal_error_analysis", "TemporalPredictionError"),
     "TemporalPredictionErrorAnalyzer": (".temporal_error_analysis", "TemporalPredictionErrorAnalyzer"),
 }
