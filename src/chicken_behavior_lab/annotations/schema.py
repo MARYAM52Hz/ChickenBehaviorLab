@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
+from chicken_behavior_lab.core.identifiers import normalize_track_id
+
 
 class AnnotationValidationError(ValueError):
     """Raised when an annotation or annotation set violates the data contract."""
@@ -90,7 +92,8 @@ class BehaviorAnnotation:
         """Return whether two annotations overlap in time for the same track."""
         if not isinstance(other, BehaviorAnnotation):
             raise TypeError("'other' must be a BehaviorAnnotation.")
-        return self.track_id == other.track_id and self.start_frame <= other.end_frame and other.start_frame <= self.end_frame
+        same_track = normalize_track_id(self.track_id) == normalize_track_id(other.track_id)
+        return same_track and self.start_frame <= other.end_frame and other.start_frame <= self.end_frame
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "BehaviorAnnotation":
@@ -148,7 +151,11 @@ class AnnotationSet:
         object.__setattr__(self, "metadata", dict(self.metadata))
 
     def for_track(self, track_id: str | int) -> tuple[BehaviorAnnotation, ...]:
-        return tuple(item for item in self.annotations if item.track_id == track_id)
+        canonical_track_id = normalize_track_id(track_id)
+        return tuple(
+            item for item in self.annotations
+            if normalize_track_id(item.track_id) == canonical_track_id
+        )
 
     def for_behavior(self, behavior_id: str) -> tuple[BehaviorAnnotation, ...]:
         behavior_id = _require_non_empty_string(behavior_id, "behavior_id")
@@ -158,7 +165,8 @@ class AnnotationSet:
         frame_index = _validate_frame(frame_index, "frame_index")
         return tuple(
             item for item in self.annotations
-            if item.contains_frame(frame_index) and (track_id is None or item.track_id == track_id)
+            if item.contains_frame(frame_index)
+            and (track_id is None or normalize_track_id(item.track_id) == normalize_track_id(track_id))
         )
 
     @classmethod
