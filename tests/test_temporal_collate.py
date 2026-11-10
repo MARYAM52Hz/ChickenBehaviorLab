@@ -149,9 +149,9 @@ def test_temporal_collator():
         "sequence_002",
     ]
 
-    assert batch.track_id.tolist() == [
-        1,
-        1,
+    assert batch.track_id == [
+        "track_1",
+        "track_1",
     ]
 
     assert batch.start_frame.tolist() == [
