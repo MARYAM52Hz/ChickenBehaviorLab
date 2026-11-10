@@ -26,6 +26,8 @@ def _validate_track_id(value: Any) -> str | int:
     # Booleans are integers in Python, but are not valid track identifiers.
     if isinstance(value, bool) or not isinstance(value, (str, int)):
         raise AnnotationValidationError("'track_id' must be a non-empty string or an integer.")
+    if isinstance(value, int) and value < 0:
+        raise AnnotationValidationError("'track_id' must be non-negative.")
     if isinstance(value, str):
         value = value.strip()
         if not value:
