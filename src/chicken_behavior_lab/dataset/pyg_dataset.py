@@ -146,6 +146,8 @@ class PyGGraphDataset:
         data.video_id = video_id
         if track_id is not None:
             data.track_id = track_id
+        if hasattr(graph, "frame_ids"):
+            data.frame_ids = tuple(str(value) for value in graph.frame_ids)
         data.start_frame = start_frame
         data.end_frame = end_frame
         data.behavior_id = sample.behavior_id
