@@ -11,6 +11,8 @@ _EXPORTS = {
     "ConfusionMatrixAnalyzer": (".confusion_matrix", "ConfusionMatrixAnalyzer"),
     "PredictionRecord": (".error_analysis", "PredictionRecord"),
     "PredictionErrorAnalyzer": (".error_analysis", "PredictionErrorAnalyzer"),
+    "FeatureDiagnosticRecord": (".feature_diagnostics", "FeatureDiagnosticRecord"),
+    "FeatureDiagnosticAnalyzer": (".feature_diagnostics", "FeatureDiagnosticAnalyzer"),
     "TemporalPredictionError": (".temporal_error_analysis", "TemporalPredictionError"),
     "TemporalPredictionErrorAnalyzer": (".temporal_error_analysis", "TemporalPredictionErrorAnalyzer"),
 }
