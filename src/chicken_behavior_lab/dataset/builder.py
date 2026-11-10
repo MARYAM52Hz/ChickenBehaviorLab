@@ -10,6 +10,7 @@ from chicken_behavior_lab.annotations.schema import (
 )
 from chicken_behavior_lab.dataset.graph_dataset import GraphDataset
 from chicken_behavior_lab.dataset.sample import GraphSample
+from chicken_behavior_lab.core.identifiers import normalize_track_id
 
 
 class GraphBuilderProtocol(Protocol):
@@ -25,7 +26,7 @@ class GraphBuilderProtocol(Protocol):
 
 
 FeatureSequenceProvider = Callable[
-    [str, int, int, int],
+    [str, str, int, int],
     Any,
 ]
 
@@ -127,7 +128,7 @@ class DatasetBuilder:
 
         sequence = self.feature_sequence_provider(
             annotation.video_id,
-            annotation.track_id,
+            normalize_track_id(annotation.track_id),
             annotation.start_frame,
             annotation.end_frame,
         )
@@ -173,11 +174,8 @@ class DatasetBuilder:
             video_001_track_1_ann_000001
         """
 
-        return (
-            f"{annotation.video_id}"
-            f"_track_{annotation.track_id}"
-            f"_{annotation.annotation_id}"
-        )
+        track_id = normalize_track_id(annotation.track_id)
+        return f"{annotation.video_id}_{track_id}_{annotation.annotation_id}"
 
     @staticmethod
     def _make_metadata(
@@ -190,7 +188,7 @@ class DatasetBuilder:
         return {
             "annotation_id": annotation.annotation_id,
             "video_id": annotation.video_id,
-            "track_id": annotation.track_id,
+            "track_id": normalize_track_id(annotation.track_id),
             "start_frame": annotation.start_frame,
             "end_frame": annotation.end_frame,
             "num_frames": annotation.num_frames,
