@@ -38,14 +38,36 @@ Video
 → Anomaly Detection
 → Mortality Prediction
 
+## Installation
+
+ChickenBehaviorLab requires Python 3.11 or newer.
+
+Install the core package:
+
+```bash
+python -m pip install -e .
+```
+
+Optional dependencies are grouped by capability. For example:
+
+```bash
+python -m pip install -e ".[vision,analysis]"
+```
+
+See [Installation Guide](docs/installation.md) for the available extras and PyTorch setup.
+
 ## Repository Structure
 
-(Coming soon)
+- `src/chicken_behavior_lab/`: framework source code
+- `tests/`: automated tests
+- `docs/`: project and workflow documentation
+- `design/`: architecture and research design documents
 
-## Documentation
+## Tests
 
-See the docs directory.
-
+```bash
+python -m pytest -q tests
+```
 
 ## License
 
