@@ -6,7 +6,12 @@ import re
 from numbers import Integral
 
 
-_TRACK_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+_TRACK_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_WINDOWS_RESERVED_NAMES = {
+    "CON", "PRN", "AUX", "NUL",
+    *(f"COM{index}" for index in range(1, 10)),
+    *(f"LPT{index}" for index in range(1, 10)),
+}
 
 
 def normalize_track_id(value: str | int) -> str:
@@ -32,7 +37,12 @@ def normalize_track_id(value: str | int) -> str:
     normalized = value.strip()
     if not normalized:
         raise ValueError("track_id must not be empty.")
-    if not _TRACK_ID_PATTERN.fullmatch(normalized) or normalized in {".", ".."}:
+    if (
+        not _TRACK_ID_PATTERN.fullmatch(normalized)
+        or normalized in {".", ".."}
+        or normalized.endswith(".")
+        or normalized.split(".")[0].upper() in _WINDOWS_RESERVED_NAMES
+    ):
         raise ValueError("track_id contains unsupported characters or path components.")
 
     if normalized.isdecimal():
