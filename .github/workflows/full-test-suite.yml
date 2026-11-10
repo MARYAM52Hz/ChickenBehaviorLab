@@ -1,9 +1,6 @@
 name: Full repository test suite
 
 on:
-  push:
-    branches:
-      - audit/foundation-repair
   pull_request:
     branches:
       - main
