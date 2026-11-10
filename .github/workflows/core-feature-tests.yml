@@ -1,9 +1,6 @@
 name: Core feature tests
 
 on:
-  push:
-    branches:
-      - audit/foundation-repair
   pull_request:
     branches:
       - main
