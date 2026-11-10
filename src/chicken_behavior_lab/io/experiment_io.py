@@ -69,9 +69,14 @@ class ExperimentOutputWriter:
 
     def __init__(
         self,
-        root: str | Path = "results/experiments",
+        root: str | Path | None = None,
+        *,
+        root_directory: str | Path | None = None,
     ) -> None:
-        self.root = Path(root)
+        if root is not None and root_directory is not None:
+            raise ValueError("Provide root or root_directory, not both.")
+        selected_root = root if root is not None else root_directory
+        self.root = Path(selected_root or "results/experiments")
 
     def create_experiment_directory(
         self,
