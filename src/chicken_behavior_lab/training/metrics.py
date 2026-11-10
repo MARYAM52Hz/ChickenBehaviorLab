@@ -302,3 +302,21 @@ def format_classification_report(
     return "\n".join(
         lines
     )
+
+
+def build_confusion_matrix(
+    predictions: torch.Tensor | np.ndarray,
+    targets: torch.Tensor | np.ndarray,
+    num_classes: int,
+) -> torch.Tensor:
+    """Return a torch confusion matrix using rows=true, columns=predicted.
+
+    The wrapper keeps the tensor-oriented API used by the training loop while
+    reusing the single NumPy implementation above.
+    """
+    metrics = compute_classification_metrics(
+        y_true=targets,
+        y_pred=predictions,
+        num_classes=num_classes,
+    )
+    return torch.as_tensor(metrics.confusion_matrix, dtype=torch.long)
