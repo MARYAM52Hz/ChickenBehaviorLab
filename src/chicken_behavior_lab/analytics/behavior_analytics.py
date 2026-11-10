@@ -11,6 +11,7 @@ from math import isfinite
 from typing import Any, Iterable, Mapping
 
 from chicken_behavior_lab.events.event_generator import BehaviorEvent
+from chicken_behavior_lab.core.identifiers import normalize_track_id
 
 
 class AnalyticsError(ValueError):
@@ -76,7 +77,12 @@ class Analytics:
                 raise AnalyticsError(f"Event at index {index} has end_frame before start_frame.")
             if video_id is not None and vid != video_id:
                 continue
-            normalized.append({"video_id": vid, "track_id": track, "behavior_id": behavior.strip(),
+            try:
+                canonical_track_id = normalize_track_id(track)
+            except (TypeError, ValueError) as exc:
+                raise AnalyticsError(f"Event at index {index} has invalid track_id: {exc}") from exc
+            normalized.append({"video_id": vid.strip(), "track_id": canonical_track_id,
+                               "behavior_id": behavior.strip(),
                                "duration_frames": end - start + 1})
 
         behavior_stats: dict[str, dict[str, int | float | None]] = {}
@@ -89,8 +95,9 @@ class Analytics:
             total_frames += duration
             behavior_acc[row["behavior_id"]][0] += 1
             behavior_acc[row["behavior_id"]][1] += duration
-            track_acc[str(row["track_id"])][0] += 1
-            track_acc[str(row["track_id"])][1] += duration
+            track_key = f'{row["video_id"]}::{row["track_id"]}'
+            track_acc[track_key][0] += 1
+            track_acc[track_key][1] += duration
 
         def stats_map(acc: dict[str, list[int]]) -> dict[str, dict[str, int | float | None]]:
             result: dict[str, dict[str, int | float | None]] = {}
