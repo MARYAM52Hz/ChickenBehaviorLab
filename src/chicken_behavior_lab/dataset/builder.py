@@ -54,7 +54,8 @@ class DatasetBuilder:
     ) -> GraphDataset:
         """Build a dataset from one AnnotationSet or an iterable plus video_id."""
         if isinstance(annotations, AnnotationSet):
-            annotations.validate()
+            # AnnotationSet and its BehaviorAnnotation members validate their
+            # invariants during dataclass construction (__post_init__).
             if video_id is not None and video_id != annotations.video_id:
                 raise ValueError("Explicit video_id does not match AnnotationSet.video_id.")
             resolved_video_id = annotations.video_id
@@ -84,7 +85,7 @@ class DatasetBuilder:
         """Build one graph sample from a video-scoped behavior annotation."""
         if not isinstance(annotation, BehaviorAnnotation):
             raise TypeError("annotation must be a BehaviorAnnotation.")
-        annotation.validate()
+        # BehaviorAnnotation validates all fields during construction.
         if not isinstance(video_id, str) or not video_id.strip():
             raise ValueError("video_id must be a non-empty string.")
         video_id = video_id.strip()
