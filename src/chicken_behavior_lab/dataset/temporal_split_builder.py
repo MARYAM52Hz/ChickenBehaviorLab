@@ -124,17 +124,9 @@ def build_temporal_splits(
         )
     ]
 
-    train_windows = builder.build(
-        train_samples
-    )
-
-    validation_windows = builder.build(
-        validation_samples
-    )
-
-    test_windows = builder.build(
-        test_samples
-    )
+    train_windows = list(builder.build(train_samples))
+    validation_windows = list(builder.build(validation_samples))
+    test_windows = list(builder.build(test_samples))
 
     result = TemporalDatasetSplits(
         train=train_windows,
