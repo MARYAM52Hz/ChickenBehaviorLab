@@ -1,50 +1,38 @@
-from chicken_behavior_lab.dataset.sample import (
-    GraphSample,
-)
+"""Dataset interfaces with lazy loading of optional PyTorch components.
 
-from chicken_behavior_lab.dataset.graph_dataset import (
-    GraphDataset,
-)
+Lightweight sample and grouping utilities can be imported without importing
+PyTorch or PyTorch Geometric. Training-specific adapters are loaded on demand.
+"""
 
-from chicken_behavior_lab.dataset.pyg_dataset import (
-    PyGGraphDataset,
-)
+from __future__ import annotations
 
-from chicken_behavior_lab.dataset.temporal_sample import (
-    TemporalGraphSample,
-)
-
-from chicken_behavior_lab.dataset.temporal_dataset import (
-    TemporalGraphDataset,
-)
-
-from chicken_behavior_lab.dataset.temporal_builder import (
-    TemporalSequenceBuilder,
-)
-
-from chicken_behavior_lab.dataset.temporal_pyg_dataset import (
-    TemporalPyGDataset,
-)
-
-from chicken_behavior_lab.dataset.temporal_batch import (
-    TemporalBatch,
-)
-
-from chicken_behavior_lab.dataset.temporal_collate import (
-    TemporalCollator,
-    make_temporal_dataloader,
-)
+from importlib import import_module
 
 
-__all__ = [
-    "GraphSample",
-    "GraphDataset",
-    "PyGGraphDataset",
-    "TemporalGraphSample",
-    "TemporalGraphDataset",
-    "TemporalSequenceBuilder",
-    "TemporalPyGDataset",
-    "TemporalBatch",
-    "TemporalCollator",
-    "make_temporal_dataloader",
-]
+_EXPORTS = {
+    "GraphSample": (".sample", "GraphSample"),
+    "GraphDataset": (".graph_dataset", "GraphDataset"),
+    "PyGGraphDataset": (".pyg_dataset", "PyGGraphDataset"),
+    "TemporalGraphSample": (".temporal_sample", "TemporalGraphSample"),
+    "TemporalGraphDataset": (".temporal_dataset", "TemporalGraphDataset"),
+    "TemporalSequenceBuilder": (".temporal_builder", "TemporalSequenceBuilder"),
+    "TemporalPyGDataset": (".temporal_pyg_dataset", "TemporalPyGDataset"),
+    "TemporalBatch": (".temporal_batch", "TemporalBatch"),
+    "TemporalCollator": (".temporal_collate", "TemporalCollator"),
+    "make_temporal_dataloader": (".temporal_collate", "make_temporal_dataloader"),
+}
+
+__all__ = list(_EXPORTS)
+
+
+def __getattr__(name: str):
+    """Resolve public dataset exports only when a caller requests them."""
+    try:
+        module_name, attribute_name = _EXPORTS[name]
+    except KeyError as exc:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from exc
+
+    module = import_module(module_name, __name__)
+    value = getattr(module, attribute_name)
+    globals()[name] = value
+    return value
