@@ -11,6 +11,8 @@ from importlib import import_module
 
 _EXPORTS = {
     "GraphSample": (".sample", "GraphSample"),
+    "DatasetFactory": (".factory", "DatasetFactory"),
+    "AnnotationRecord": (".factory", "AnnotationRecord"),
     "GraphDataset": (".graph_dataset", "GraphDataset"),
     "PyGGraphDataset": (".pyg_dataset", "PyGGraphDataset"),
     "TemporalGraphSample": (".temporal_sample", "TemporalGraphSample"),
