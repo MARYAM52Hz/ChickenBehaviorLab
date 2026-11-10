@@ -39,6 +39,11 @@ jobs:
           tests/test_feature_store.py
           tests/test_track_id_contract.py
           tests/test_dataset_builder.py
+          tests/test_error_analysis.py
+          tests/test_feature_diagnostics.py
+          tests/test_event_analytics_track_ids.py
+          tests/test_annotation_schema.py
+          tests/test_annotation_loader.py
           tests/test_temporal_sample.py
           tests/test_group_splitter_ids.py
           tests/normalization.py
