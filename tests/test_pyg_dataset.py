@@ -70,7 +70,7 @@ def create_graph() -> TemporalSkeletonGraph:
     return graph
 
 
-def create_sample() -> GraphSample:
+def create_sample(sample_id: str = "video_001_track_1_ann_001") -> GraphSample:
     """
     Create a GraphSample for testing.
     """
@@ -81,7 +81,7 @@ def create_sample() -> GraphSample:
         graph=graph,
         label=2,
         behavior_id="standing",
-        sample_id="video_001_track_1_ann_001",
+        sample_id=sample_id,
         metadata={
             "video_id": "video_001",
             "track_id": 1,
@@ -92,8 +92,8 @@ def create_sample() -> GraphSample:
 def test_pyg_dataset_length():
 
     samples = [
-        create_sample(),
-        create_sample(),
+        create_sample("video_001_track_1_ann_001"),
+        create_sample("video_001_track_1_ann_002"),
     ]
 
     dataset = PyGGraphDataset(
@@ -165,15 +165,9 @@ def test_pyg_dataset_metadata():
         == "standing"
     )
 
-    assert data.frame_ids == [
-        "100",
-        "101",
-    ]
-
-    assert (
-        data.metadata["video_id"]
-        == "video_001"
-    )
+    assert data.frame_ids == ("100", "101")
+    assert data.video_id == "video_001"
+    assert data.track_id == "track_1"
 
 
 def test_pyg_dataset_preserves_values():
