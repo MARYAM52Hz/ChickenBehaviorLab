@@ -1,68 +1,33 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
+import hashlib
+import json
 from typing import Any, Protocol
 
 from chicken_behavior_lab.annotations.labels import BehaviorLabelEncoder
-from chicken_behavior_lab.annotations.schema import (
-    AnnotationSet,
-    BehaviorAnnotation,
-)
+from chicken_behavior_lab.annotations.schema import AnnotationSet, BehaviorAnnotation
+from chicken_behavior_lab.core.identifiers import normalize_track_id
 from chicken_behavior_lab.dataset.graph_dataset import GraphDataset
 from chicken_behavior_lab.dataset.sample import GraphSample
-from chicken_behavior_lab.core.identifiers import normalize_track_id
 
 
 class GraphBuilderProtocol(Protocol):
-    """
-    Minimal interface required from a skeleton graph builder.
-
-    This protocol keeps DatasetBuilder independent from the concrete
-    graph-construction implementation.
-    """
+    """Minimal interface required from a skeleton graph builder."""
 
     def build(self, sequence: Any) -> Any:
         ...
 
 
-FeatureSequenceProvider = Callable[
-    [str, str, int, int],
-    Any,
-]
+FeatureSequenceProvider = Callable[[str, str, int, int], Any]
 
 
 class DatasetBuilder:
-    """
-    Build a graph-based behavior dataset from behavior annotations.
+    """Build graph samples using a video-level annotation set and feature provider.
 
-    DatasetBuilder connects:
-
-        BehaviorAnnotation
-                +
-        temporal feature sequence
-                +
-        skeleton graph builder
-                +
-        behavior label encoder
-                ↓
-            GraphSample
-                ↓
-            GraphDataset
-
-    The builder deliberately does not read videos, run tracking, perform
-    pose estimation, or compute features itself.
-
-    Instead, a feature_sequence_provider is supplied by the caller.
-
-    The provider receives:
-
-        video_id
-        track_id
-        start_frame
-        end_frame
-
-    and must return the temporal feature representation needed by the
-    graph builder.
+    The feature provider receives (video_id, canonical_track_id, start_frame,
+    end_frame). The source annotation schema remains unchanged; legacy numeric
+    track IDs are normalized only at this dataset-construction boundary.
     """
 
     def __init__(
@@ -71,6 +36,12 @@ class DatasetBuilder:
         label_encoder: BehaviorLabelEncoder,
         feature_sequence_provider: FeatureSequenceProvider,
     ) -> None:
+        if not callable(getattr(graph_builder, "build", None)):
+            raise TypeError("graph_builder must provide a callable build() method.")
+        if not isinstance(label_encoder, BehaviorLabelEncoder):
+            raise TypeError("label_encoder must be a BehaviorLabelEncoder.")
+        if not callable(feature_sequence_provider):
+            raise TypeError("feature_sequence_provider must be callable.")
         self.graph_builder = graph_builder
         self.label_encoder = label_encoder
         self.feature_sequence_provider = feature_sequence_provider
@@ -78,61 +49,54 @@ class DatasetBuilder:
     def build(
         self,
         annotations: AnnotationSet | Iterable[BehaviorAnnotation],
+        *,
+        video_id: str | None = None,
     ) -> GraphDataset:
-        """
-        Convert annotations into a GraphDataset.
-
-        Parameters
-        ----------
-        annotations:
-            AnnotationSet or iterable of BehaviorAnnotation objects.
-
-        Returns
-        -------
-        GraphDataset
-            Dataset containing one GraphSample per annotation.
-        """
-
+        """Build a dataset from one AnnotationSet or an iterable plus video_id."""
         if isinstance(annotations, AnnotationSet):
             annotations.validate()
+            if video_id is not None and video_id != annotations.video_id:
+                raise ValueError("Explicit video_id does not match AnnotationSet.video_id.")
+            resolved_video_id = annotations.video_id
             annotation_items = annotations.annotations
         else:
             annotation_items = list(annotations)
+            if video_id is None:
+                raise ValueError(
+                    "video_id is required when building from an annotation iterable."
+                )
+            if not isinstance(video_id, str) or not video_id.strip():
+                raise ValueError("video_id must be a non-empty string.")
+            resolved_video_id = video_id.strip()
 
-        samples: list[GraphSample] = []
-
-        for annotation in annotation_items:
-            sample = self.build_sample(annotation)
-            samples.append(sample)
-
+        samples = [
+            self.build_sample(annotation, video_id=resolved_video_id)
+            for annotation in annotation_items
+        ]
         return GraphDataset(samples)
 
     def build_sample(
         self,
         annotation: BehaviorAnnotation,
+        *,
+        video_id: str,
     ) -> GraphSample:
-        """
-        Build one GraphSample from one behavior annotation.
-        """
-
+        """Build one graph sample from a video-scoped behavior annotation."""
         if not isinstance(annotation, BehaviorAnnotation):
-            raise TypeError(
-                "annotation must be a BehaviorAnnotation."
-            )
-
+            raise TypeError("annotation must be a BehaviorAnnotation.")
         annotation.validate()
+        if not isinstance(video_id, str) or not video_id.strip():
+            raise ValueError("video_id must be a non-empty string.")
+        video_id = video_id.strip()
 
-        label = self.label_encoder.encode(
-            annotation.behavior_id
-        )
-
+        track_id = normalize_track_id(annotation.track_id)
+        label = self.label_encoder.encode(annotation.behavior_id)
         sequence = self.feature_sequence_provider(
-            annotation.video_id,
-            normalize_track_id(annotation.track_id),
+            video_id,
+            track_id,
             annotation.start_frame,
             annotation.end_frame,
         )
-
         if sequence is None:
             raise ValueError(
                 "feature_sequence_provider returned None for "
@@ -140,59 +104,51 @@ class DatasetBuilder:
             )
 
         graph = self.graph_builder.build(sequence)
-
         if graph is None:
             raise ValueError(
                 "graph_builder returned None for "
                 f"annotation '{annotation.annotation_id}'."
             )
 
-        sample_id = self._make_sample_id(annotation)
-
-        metadata = self._make_metadata(annotation)
-
         sample = GraphSample(
             graph=graph,
             label=label,
             behavior_id=annotation.behavior_id,
-            sample_id=sample_id,
-            metadata=metadata,
+            sample_id=self._make_sample_id(annotation, video_id),
+            metadata=self._make_metadata(annotation, video_id),
         )
-
         sample.validate()
-
         return sample
 
     @staticmethod
-    def _make_sample_id(
-        annotation: BehaviorAnnotation,
-    ) -> str:
-        """
-        Generate a deterministic sample identifier.
-
-        Example:
-            video_001_track_1_ann_000001
-        """
-
+    def _make_sample_id(annotation: BehaviorAnnotation, video_id: str) -> str:
+        """Create a deterministic ID, including a digest if annotation_id is absent."""
+        annotation_id = annotation.annotation_id
+        if annotation_id is None:
+            payload = json.dumps(
+                annotation.to_dict(),
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            )
+            digest = hashlib.sha256(
+                f"{video_id}|{payload}".encode("utf-8")
+            ).hexdigest()[:12]
+            annotation_id = f"ann_{digest}"
         track_id = normalize_track_id(annotation.track_id)
-        return f"{annotation.video_id}_{track_id}_{annotation.annotation_id}"
+        return f"{video_id}_{track_id}_{annotation_id}"
 
     @staticmethod
-    def _make_metadata(
-        annotation: BehaviorAnnotation,
-    ) -> dict[str, Any]:
-        """
-        Preserve annotation provenance inside the dataset sample.
-        """
-
+    def _make_metadata(annotation: BehaviorAnnotation, video_id: str) -> dict[str, Any]:
+        """Preserve the fields actually defined by the public annotation schema."""
         return {
             "annotation_id": annotation.annotation_id,
-            "video_id": annotation.video_id,
+            "video_id": video_id,
             "track_id": normalize_track_id(annotation.track_id),
             "start_frame": annotation.start_frame,
             "end_frame": annotation.end_frame,
-            "num_frames": annotation.num_frames,
-            "annotator": annotation.annotator,
+            "num_frames": annotation.duration_frames,
+            "annotator_id": annotation.annotator_id,
             "confidence": annotation.confidence,
-            "notes": annotation.notes,
+            "attributes": dict(annotation.attributes),
         }
