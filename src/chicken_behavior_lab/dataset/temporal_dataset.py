@@ -95,7 +95,7 @@ class TemporalGraphDataset:
         ]
 
     @property
-    def track_ids(self) -> list[int | None]:
+    def track_ids(self) -> list[str | None]:
         return [
             sample.track_id
             for sample in self.samples
