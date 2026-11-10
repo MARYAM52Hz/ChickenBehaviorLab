@@ -58,7 +58,7 @@ class PoseAdapter:
     def adapt(
         self,
         *,
-        track_id: int,
+        track_id: str | int,
         frame_index: int,
         keypoints: Mapping[str, Keypoint | None],
     ) -> PoseEstimate:
