@@ -346,11 +346,8 @@ class TemporalPyGDataset:
             sample.video_id or ""
         )
 
-        data.track_id = (
-            -1
-            if sample.track_id is None
-            else int(sample.track_id)
-        )
+        if sample.track_id is not None:
+            data.track_id = sample.track_id
 
         data.start_frame = int(
             sample.first_frame
