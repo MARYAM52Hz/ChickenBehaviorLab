@@ -43,6 +43,7 @@ class TemporalSequenceBuilder:
         sequence_length: int,
         sequence_stride: int = 1,
         require_contiguous_frames: bool = True,
+        require_same_behavior: bool = False,
     ) -> None:
 
         if sequence_length < 1:
@@ -63,9 +64,13 @@ class TemporalSequenceBuilder:
             sequence_stride
         )
 
-        self.require_contiguous_frames = (
-            require_contiguous_frames
-        )
+        if not isinstance(require_contiguous_frames, bool):
+            raise TypeError("require_contiguous_frames must be a bool.")
+        if not isinstance(require_same_behavior, bool):
+            raise TypeError("require_same_behavior must be a bool.")
+
+        self.require_contiguous_frames = require_contiguous_frames
+        self.require_same_behavior = require_same_behavior
 
     def build(
         self,
@@ -245,15 +250,16 @@ class TemporalSequenceBuilder:
                 len(window)
                 == self.sequence_length
             ):
-                if (
+                is_contiguous = (
                     not self.require_contiguous_frames
-                    or self._is_contiguous(
-                        window
-                    )
-                ):
-                    windows.append(
-                        list(window)
-                    )
+                    or self._is_contiguous(window)
+                )
+                is_single_behavior = (
+                    not self.require_same_behavior
+                    or len({sample.behavior_id for sample in window}) == 1
+                )
+                if is_contiguous and is_single_behavior:
+                    windows.append(list(window))
 
             start_index += (
                 self.sequence_stride
@@ -504,3 +510,7 @@ class TemporalSequenceBuilder:
                 )
 
         return result
+
+
+# Backward-compatible name used by the temporal split helper.
+TemporalWindow = TemporalGraphSample
