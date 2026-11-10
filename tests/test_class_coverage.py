@@ -1,6 +1,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
 from chicken_behavior_lab.dataset.preflight import (
@@ -19,19 +20,13 @@ def make_sample(
     """Create a valid minimal graph sample for unit tests."""
 
     graph = TemporalSkeletonGraph(
-        node_features=[
+        node_features=np.asarray([[
             [0.0, 0.0, 1.0, 0.0],
             [1.0, 0.0, 1.0, 0.0],
             [2.0, 0.0, 1.0, 0.0],
-        ],
-        edge_index=[
-            [0, 1],
-            [1, 2],
-        ],
-        edge_features=[
-            [1.0],
-            [1.0],
-        ],
+        ]], dtype=np.float32),
+        edge_index=np.asarray([[0, 1], [1, 2]], dtype=np.int64),
+        edge_features=np.asarray([[[1.0], [1.0]]], dtype=np.float32),
     )
 
     return GraphSample(
