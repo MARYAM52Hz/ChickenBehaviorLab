@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import Any
 import json
 
+from chicken_behavior_lab.core.identifiers import normalize_track_id
+
 
 @dataclass(frozen=True, slots=True)
 class PredictionRecord:
@@ -14,7 +16,7 @@ class PredictionRecord:
 
     sample_id: str
     video_id: str
-    track_id: int
+    track_id: str | None
     start_frame: int
     end_frame: int
     true_behavior: str
@@ -43,10 +45,9 @@ class PredictionRecord:
                 "video_id cannot be empty."
             )
 
-        if self.track_id < 0:
-            raise ValueError(
-                "track_id cannot be negative."
-            )
+        if self.track_id is not None:
+            if normalize_track_id(self.track_id) != self.track_id:
+                raise ValueError("track_id must use canonical string form.")
 
         if self.start_frame < 0:
             raise ValueError(
@@ -451,8 +452,9 @@ class PredictionErrorAnalyzer:
                     video_id=str(
                         item["video_id"]
                     ),
-                    track_id=int(
-                        item["track_id"]
+                    track_id=(
+                        None if item.get("track_id") is None
+                        else normalize_track_id(item["track_id"])
                     ),
                     start_frame=int(
                         item["start_frame"]
