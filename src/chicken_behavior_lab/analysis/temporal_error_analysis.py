@@ -12,7 +12,7 @@ from chicken_behavior_lab.training.temporal_evaluator import (
 class TemporalPredictionError:
     sample_id: str
     video_id: str
-    track_id: int
+    track_id: str | None
     start_frame: int
     end_frame: int
     true_behavior: str
