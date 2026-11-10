@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from chicken_behavior_lab.core.identifiers import normalize_track_id
+from chicken_behavior_lab.annotations.schema import AnnotationSet, BehaviorAnnotation
 from chicken_behavior_lab.dataset.sample import GraphSample
 from chicken_behavior_lab.dataset.temporal_builder import TemporalSequenceBuilder
 from chicken_behavior_lab.features.feature_store import FeatureStore
@@ -51,7 +52,7 @@ def test_normalize_track_id_migrates_numeric_legacy_ids():
     assert normalize_track_id("bird-A") == "bird-A"
 
 
-@pytest.mark.parametrize("value", [True, -1, "", "../escape", "folder/name"])
+@pytest.mark.parametrize("value", [True, -1, "", "../escape", "folder/name", "bad:id", "name.", "CON"])
 def test_normalize_track_id_rejects_invalid_values(value):
     with pytest.raises((TypeError, ValueError)):
         normalize_track_id(value)
@@ -142,3 +143,44 @@ def test_feature_store_numeric_and_named_ids_address_the_same_file(tmp_path):
     loaded = store.load("video_01", "track_1")
     np.testing.assert_array_equal(loaded.features, sequence.features)
 
+
+
+def test_annotation_queries_compare_canonical_track_identity():
+    legacy = BehaviorAnnotation(
+        track_id=1,
+        behavior_id="feeding",
+        start_frame=10,
+        end_frame=20,
+        annotation_id="legacy",
+    )
+    canonical = BehaviorAnnotation(
+        track_id="track_1",
+        behavior_id="walking",
+        start_frame=15,
+        end_frame=25,
+        annotation_id="canonical",
+    )
+    other = BehaviorAnnotation(
+        track_id="track_2",
+        behavior_id="standing",
+        start_frame=15,
+        end_frame=25,
+        annotation_id="other",
+    )
+
+    assert legacy.overlaps(canonical)
+    assert not legacy.overlaps(other)
+
+    annotations = AnnotationSet(
+        video_id="video_01",
+        annotations=(legacy, canonical, other),
+    )
+    assert {item.annotation_id for item in annotations.for_track("track_1")} == {
+        "legacy", "canonical"
+    }
+    assert {item.annotation_id for item in annotations.for_track(1)} == {
+        "legacy", "canonical"
+    }
+    assert {item.annotation_id for item in annotations.at_frame(16, track_id=1)} == {
+        "legacy", "canonical"
+    }
