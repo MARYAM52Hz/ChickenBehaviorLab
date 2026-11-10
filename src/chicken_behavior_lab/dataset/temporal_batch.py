@@ -38,7 +38,7 @@ class TemporalBatch:
 
     video_id: list[str]
 
-    track_id: torch.Tensor
+    track_id: list[str | None]
 
     start_frame: torch.Tensor
 
@@ -68,7 +68,6 @@ class TemporalBatch:
         self.x = self.x.to(device)
         self.y = self.y.to(device)
 
-        self.track_id = self.track_id.to(device)
         self.start_frame = self.start_frame.to(device)
         self.end_frame = self.end_frame.to(device)
 
