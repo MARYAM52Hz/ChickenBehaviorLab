@@ -55,7 +55,7 @@ class PoseGraphIntegrationTests(unittest.TestCase):
         skeleton = self.skeleton_adapter.adapt(pose)
         graph = self.graph_encoder.encode(skeleton)
 
-        self.assertEqual(graph.track_id, 7)
+        self.assertEqual(graph.track_id, "track_7")
         self.assertEqual(graph.frame_index, 12)
         self.assertEqual(
             graph.node_names,
