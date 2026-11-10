@@ -49,6 +49,10 @@ class FeatureDiagnosticRecord:
     mean_body_orientation: float | None
     std_body_orientation: float | None
 
+    def __post_init__(self) -> None:
+        if self.track_id is not None:
+            object.__setattr__(self, "track_id", normalize_track_id(self.track_id))
+
     def validate(self) -> None:
         if not self.sample_id:
             raise ValueError(
