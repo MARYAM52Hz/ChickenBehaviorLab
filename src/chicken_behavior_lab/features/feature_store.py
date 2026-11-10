@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from numbers import Integral
 from pathlib import Path
 import re
 
 import numpy as np
 
 from chicken_behavior_lab.features.temporal_features import TemporalFeatureSequence
+from chicken_behavior_lab.core.identifiers import normalize_track_id
 
 
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
@@ -27,19 +27,9 @@ class FeatureStore:
             raise ValueError(f"{name} must be a safe non-empty identifier.")
         return value
 
-    @classmethod
-    def _normalize_track_id(cls, track_id: str | int) -> str:
-        if isinstance(track_id, bool):
-            raise ValueError("track_id must be a non-negative integer or safe string.")
-        if isinstance(track_id, Integral):
-            if track_id < 0:
-                raise ValueError("track_id cannot be negative.")
-            value = str(int(track_id))
-        elif isinstance(track_id, str):
-            value = cls._validate_identifier(track_id, "track_id")
-        else:
-            raise TypeError("track_id must be a non-negative integer or safe string.")
-        return value if value.startswith("track_") else f"track_{value}"
+    @staticmethod
+    def _normalize_track_id(track_id: str | int) -> str:
+        return normalize_track_id(track_id)
 
     def _get_path(self, video_id: str, track_id: str | int) -> Path:
         safe_video_id = self._validate_identifier(video_id, "video_id")
