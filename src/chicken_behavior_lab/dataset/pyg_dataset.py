@@ -7,6 +7,7 @@ import torch
 from torch_geometric.data import Data
 
 from chicken_behavior_lab.dataset.sample import GraphSample
+from chicken_behavior_lab.core.identifiers import normalize_track_id
 
 
 class PyGGraphDataset:
@@ -102,12 +103,8 @@ class PyGGraphDataset:
             )
         )
 
-        track_id = int(
-            metadata.get(
-                "track_id",
-                -1,
-            )
-        )
+        raw_track_id = metadata.get("track_id")
+        track_id = None if raw_track_id is None else normalize_track_id(raw_track_id)
 
         start_frame = int(
             metadata.get(
@@ -147,7 +144,8 @@ class PyGGraphDataset:
         # Explicit sample metadata.
         data.sample_id = sample.sample_id
         data.video_id = video_id
-        data.track_id = track_id
+        if track_id is not None:
+            data.track_id = track_id
         data.start_frame = start_frame
         data.end_frame = end_frame
         data.behavior_id = sample.behavior_id
