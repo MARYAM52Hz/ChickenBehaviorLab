@@ -183,14 +183,14 @@ def test_report_can_be_serialized() -> None:
     """The report should be suitable for JSON experiment manifests."""
 
     report = inspect_class_coverage(
-        train=[
+        train_samples=[
             make_sample("tr1", "feeding"),
             make_sample("tr2", "walking"),
         ],
-        validation=[
+        validation_samples=[
             make_sample("v1", "feeding"),
         ],
-        test=[
+        test_samples=[
             make_sample("t1", "walking"),
         ],
     )
