@@ -53,9 +53,12 @@ def _safe_divide(
 
 
 def compute_classification_metrics(
-    y_true: torch.Tensor | np.ndarray,
-    y_pred: torch.Tensor | np.ndarray,
-    num_classes: int,
+    y_true: torch.Tensor | np.ndarray | None = None,
+    y_pred: torch.Tensor | np.ndarray | None = None,
+    num_classes: int | None = None,
+    *,
+    targets: torch.Tensor | np.ndarray | None = None,
+    predictions: torch.Tensor | np.ndarray | None = None,
 ) -> ClassificationMetrics:
     """
     Compute multi-class classification metrics.
@@ -71,6 +74,20 @@ def compute_classification_metrics(
     num_classes:
         Number of classes.
     """
+
+    # Compatibility aliases used by older evaluation/test code.
+    if targets is not None:
+        if y_true is not None:
+            raise ValueError("Provide y_true or targets, not both.")
+        y_true = targets
+    if predictions is not None:
+        if y_pred is not None:
+            raise ValueError("Provide y_pred or predictions, not both.")
+        y_pred = predictions
+    if y_true is None or y_pred is None:
+        raise ValueError("Both y_true/targets and y_pred/predictions are required.")
+    if isinstance(num_classes, bool) or not isinstance(num_classes, int) or num_classes <= 0:
+        raise ValueError("num_classes must be a positive integer.")
 
     if isinstance(y_true, torch.Tensor):
         y_true = y_true.detach().cpu().numpy()
@@ -94,10 +111,6 @@ def compute_classification_metrics(
             "the same shape."
         )
 
-    if num_classes <= 0:
-        raise ValueError(
-            "num_classes must be > 0."
-        )
 
     confusion_matrix = np.zeros(
         (
