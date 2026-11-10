@@ -14,6 +14,7 @@ from chicken_behavior_lab.dataset.temporal_dataset import (
 from chicken_behavior_lab.dataset.temporal_sample import (
     TemporalGraphSample,
 )
+from chicken_behavior_lab.core.identifiers import normalize_track_id
 
 
 class TemporalSequenceBuilder:
@@ -129,9 +130,7 @@ class TemporalSequenceBuilder:
         temporal_samples.sort(
             key=lambda sample: (
                 sample.video_id or "",
-                sample.track_id
-                if sample.track_id is not None
-                else -1,
+                sample.track_id or "",
                 sample.first_frame,
             )
         )
@@ -144,7 +143,7 @@ class TemporalSequenceBuilder:
         self,
         samples: Sequence[GraphSample],
     ) -> dict[
-        tuple[str, int],
+        tuple[str, str],
         list[GraphSample],
     ]:
 
@@ -180,9 +179,7 @@ class TemporalSequenceBuilder:
                 video_id
             )
 
-            track_id = int(
-                track_id
-            )
+            track_id = normalize_track_id(track_id)
 
             groups[
                 (
@@ -317,7 +314,7 @@ class TemporalSequenceBuilder:
         *,
         window: Sequence[GraphSample],
         video_id: str,
-        track_id: int,
+        track_id: str,
         window_index: int,
     ) -> TemporalGraphSample:
 
@@ -356,7 +353,7 @@ class TemporalSequenceBuilder:
 
         sample_id = (
             f"{video_id}"
-            f"__track_{track_id}"
+            f"__{track_id}"
             f"__frames_{start_frame}_{end_frame}"
             f"__window_{window_index:06d}"
         )
@@ -498,7 +495,7 @@ class TemporalSequenceBuilder:
             else:
                 group = (
                     f"{video_id}"
-                    f"::track::{int(track_id)}"
+                    f"::track::{normalize_track_id(track_id)}"
                 )
 
             if group in allowed_groups:
