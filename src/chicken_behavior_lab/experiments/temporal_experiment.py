@@ -187,6 +187,18 @@ class TemporalExperimentData:
     split_result: Any
     split_diagnostics: Any
 
+    @property
+    def train_temporal(self) -> list[Any]:
+        return self.train_temporal_samples
+
+    @property
+    def validation_temporal(self) -> list[Any]:
+        return self.validation_temporal_samples
+
+    @property
+    def test_temporal(self) -> list[Any]:
+        return self.test_temporal_samples
+
 
 @dataclass(slots=True)
 class TemporalExperimentResult:
@@ -212,6 +224,30 @@ class TemporalExperimentResult:
     split_diagnostics: dict[str, Any]
 
     prediction_records: list[dict[str, Any]] = field(default_factory=list)
+
+    @property
+    def train_size(self) -> int:
+        return self.num_train_samples
+
+    @property
+    def validation_size(self) -> int:
+        return self.num_validation_samples
+
+    @property
+    def test_size(self) -> int:
+        return self.num_test_samples
+
+    @property
+    def train_temporal_size(self) -> int:
+        return self.num_train_sequences
+
+    @property
+    def validation_temporal_size(self) -> int:
+        return self.num_validation_sequences
+
+    @property
+    def test_temporal_size(self) -> int:
+        return self.num_test_sequences
 
 
 # ---------------------------------------------------------------------------
@@ -450,7 +486,7 @@ class TemporalExperiment:
     def prepare_data(
         self,
         graph_samples: Sequence[Any],
-        annotation_set: AnnotationSet,
+        annotation_set: AnnotationSet | Sequence[AnnotationSet],
     ) -> TemporalExperimentData:
         """Align annotations, split groups, validate splits, and build windows."""
         if not graph_samples:
@@ -825,6 +861,12 @@ class TemporalExperiment:
         """Train the model and evaluate it once on the held-out test split."""
         if data is not None:
             self._prepared_data = data
+
+        if self.model is None and self._prepared_data is None:
+            raise RuntimeError(
+                "Model has not been built and data has not been prepared; "
+                "call prepare_data() and build_model() first."
+            )
 
         prepared = self.prepared_data
 
