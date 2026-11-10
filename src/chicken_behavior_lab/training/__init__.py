@@ -7,6 +7,10 @@ from importlib import import_module
 
 _EXPORTS = {
     "ClassificationLoss": (".losses", "ClassificationLoss"),
+    "ClassificationMetrics": (".metrics", "ClassificationMetrics"),
+    "compute_classification_metrics": (".metrics", "compute_classification_metrics"),
+    "build_confusion_matrix": (".metrics", "build_confusion_matrix"),
+    "format_classification_report": (".metrics", "format_classification_report"),
     "Trainer": (".trainer", "Trainer"),
     "build_trainer": (".trainer_factory", "build_trainer"),
     "CheckpointManager": (".checkpoint", "CheckpointManager"),
