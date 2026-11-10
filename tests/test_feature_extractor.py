@@ -85,10 +85,7 @@ def test_feature_extractor():
         MockGraph()
     )
 
-    assert (
-        result["mean_motion_energy"]
-        == 0.20
-    )
+    assert np.isclose(result["mean_motion_energy"], 0.20, atol=1e-7)
 
     assert (
         result["mean_velocity"]
