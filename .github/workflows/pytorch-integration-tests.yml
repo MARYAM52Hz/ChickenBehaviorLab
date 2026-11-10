@@ -1,0 +1,40 @@
+name: PyTorch and temporal GNN integration tests
+
+on:
+  push:
+    branches:
+      - audit/foundation-repair
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  pytorch-integration-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install CPU PyTorch
+        run: python -m pip install --upgrade pip && python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Install integration dependencies
+        run: python -m pip install pytest numpy scikit-learn torch-geometric
+
+      - name: Run PyTorch and temporal graph tests
+        env:
+          PYTHONPATH: src
+        run: >
+          python -m pytest -q
+          tests/test_temporal_collate.py
+          tests/test_temporal_dataloader.py
+          tests/test_temporal_behavior_gnn.py
+          tests/test_temporal_evaluator.py
+          tests/test_evaluator_metadata.py
+          tests/test_pyg_dataset.py
+          tests/test_temporal_sample.py
