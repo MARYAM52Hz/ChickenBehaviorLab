@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
+
 from chicken_behavior_lab.annotations.schema import (
     AnnotationSet,
     BehaviorAnnotation,
@@ -11,7 +13,7 @@ from chicken_behavior_lab.experiments.temporal_experiment import (
     TemporalExperiment,
     TemporalExperimentConfig,
 )
-from chicken_behavior_lab.graph.graph import TemporalSkeletonGraph
+from chicken_behavior_lab.graph.graph import SkeletonGraph
 from chicken_behavior_lab.models.factory import (
     TemporalModelConfig,
     build_temporal_model,
@@ -32,27 +34,18 @@ def _make_graph_sample(
 ) -> GraphSample:
     """Create one synthetic frame-level skeleton graph."""
 
-    node_features = [
+    node_features = np.asarray(
         [
-            float(frame_index),
-            float(node_index),
-            1.0,
-            0.0,
-        ]
-        for node_index in range(3)
-    ]
+            [float(frame_index), float(node_index), 1.0, 0.0]
+            for node_index in range(3)
+        ],
+        dtype=np.float32,
+    )
 
-    edge_index = [
-        [0, 1],
-        [1, 2],
-    ]
+    edge_index = np.asarray([[0, 1], [1, 2]], dtype=np.int64)
+    edge_features = np.asarray([[1.0], [1.0]], dtype=np.float32)
 
-    edge_features = [
-        [1.0],
-        [1.0],
-    ]
-
-    graph = TemporalSkeletonGraph(
+    graph = SkeletonGraph(
         node_features=node_features,
         edge_index=edge_index,
         edge_features=edge_features,
@@ -110,9 +103,8 @@ def _make_synthetic_samples() -> list[GraphSample]:
     return samples
 
 
-def _make_annotations() -> AnnotationSet:
-    """Create annotations covering all synthetic videos."""
-
+def _make_annotations() -> tuple[AnnotationSet, ...]:
+    """Create one video-scoped annotation document for each synthetic video."""
     group_specs = [
         ("video_001", "feeding"),
         ("video_002", "feeding"),
@@ -121,27 +113,21 @@ def _make_annotations() -> AnnotationSet:
         ("video_005", "resting"),
         ("video_006", "resting"),
     ]
-
-    annotations = [
-        BehaviorAnnotation(
-            annotation_id=f"annotation_{index:03d}",
+    return tuple(
+        AnnotationSet(
             video_id=video_id,
-            track_id=1,
-            start_frame=0,
-            end_frame=FRAMES_PER_VIDEO - 1,
-            behavior_id=behavior_id,
+            annotations=(
+                BehaviorAnnotation(
+                    annotation_id=f"annotation_{index:03d}",
+                    track_id=1,
+                    start_frame=0,
+                    end_frame=FRAMES_PER_VIDEO - 1,
+                    behavior_id=behavior_id,
+                ),
+            ),
         )
-        for index, (video_id, behavior_id)
-        in enumerate(group_specs, start=1)
-    ]
-
-    annotation_set = AnnotationSet(
-        annotations=annotations,
+        for index, (video_id, behavior_id) in enumerate(group_specs, start=1)
     )
-
-    annotation_set.validate()
-
-    return annotation_set
 
 
 def _assert_group_disjoint(
@@ -206,14 +192,13 @@ def test_annotation_fixture_structure() -> None:
 
     assert len(annotation_set.annotations) == 6
 
-    video_ids = {
-        annotation.video_id
-        for annotation in annotation_set.annotations
-    }
+    video_ids = {item.video_id for item in annotation_set}
 
     assert len(video_ids) == 6
 
-    for annotation in annotation_set.annotations:
+    for video_annotations in annotation_set:
+        assert len(video_annotations.annotations) == 1
+        annotation = video_annotations.annotations[0]
         assert annotation.start_frame == 0
         assert annotation.end_frame == FRAMES_PER_VIDEO - 1
         assert annotation.track_id == 1
