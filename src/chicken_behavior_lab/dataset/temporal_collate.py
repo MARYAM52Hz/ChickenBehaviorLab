@@ -7,6 +7,7 @@ import torch
 from chicken_behavior_lab.dataset.temporal_batch import (
     TemporalBatch,
 )
+from chicken_behavior_lab.core.identifiers import normalize_track_id
 
 
 class TemporalCollator:
@@ -144,13 +145,11 @@ class TemporalCollator:
                 for data in data_list
             ],
 
-            track_id=torch.tensor(
-                [
-                    int(data.track_id)
-                    for data in data_list
-                ],
-                dtype=torch.long,
-            ),
+            track_id=[
+                None if getattr(data, "track_id", None) is None
+                else normalize_track_id(data.track_id)
+                for data in data_list
+            ],
 
             start_frame=torch.tensor(
                 [
