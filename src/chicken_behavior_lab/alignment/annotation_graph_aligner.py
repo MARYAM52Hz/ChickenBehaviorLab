@@ -277,3 +277,45 @@ class AnnotationGraphAligner:
             f"(video_id='{conflict.video_id}', track_id='{conflict.track_id}', "
             f"frame={conflict.frame}): {behaviors}"
         )
+
+
+    @staticmethod
+    def build_label_mapping(samples: Sequence[GraphSample]) -> dict[str, int]:
+        """Create a deterministic zero-based mapping from training behavior IDs."""
+        if not samples:
+            raise ValueError("Cannot build a label mapping from an empty sample sequence.")
+        behavior_ids = sorted({sample.behavior_id for sample in samples})
+        if any(not isinstance(value, str) or not value.strip() for value in behavior_ids):
+            raise ValueError("Every training sample must have a non-empty behavior_id.")
+        return {behavior_id: index for index, behavior_id in enumerate(behavior_ids)}
+
+    @staticmethod
+    def apply_label_mapping(
+        samples: Sequence[GraphSample],
+        label_mapping: dict[str, int],
+    ) -> list[GraphSample]:
+        """Return graph samples with their behavior IDs mapped to class indices."""
+        if not label_mapping:
+            raise ValueError("label_mapping cannot be empty.")
+        values = list(label_mapping.values())
+        if any(isinstance(value, bool) or not isinstance(value, int) for value in values):
+            raise TypeError("label_mapping values must be integers.")
+        if len(values) != len(set(values)) or sorted(values) != list(range(len(values))):
+            raise ValueError("label_mapping values must be unique, contiguous, and start at 0.")
+
+        result: list[GraphSample] = []
+        for sample in samples:
+            if sample.behavior_id not in label_mapping:
+                raise ValueError(
+                    f"Behavior '{sample.behavior_id}' is missing from label_mapping."
+                )
+            result.append(
+                GraphSample(
+                    graph=sample.graph,
+                    label=label_mapping[sample.behavior_id],
+                    behavior_id=sample.behavior_id,
+                    sample_id=sample.sample_id,
+                    metadata=dict(sample.metadata or {}),
+                )
+            )
+        return result
