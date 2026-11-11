@@ -263,14 +263,14 @@ class GroupAwareSplitter:
                 "video_id"
             )
 
-            if not video_id:
+            if video_id is None or not str(video_id).strip():
                 raise ValueError(
                     "Cannot perform video-level split because "
                     f"sample '{sample.sample_id}' has no "
-                    "metadata.video_id."
+                    "usable metadata.video_id."
                 )
 
-            return str(video_id)
+            return str(video_id).strip()
 
         if self.group_key == "track_id":
 
@@ -288,12 +288,16 @@ class GroupAwareSplitter:
             video_id = metadata.get(
                 "video_id"
             )
+            if video_id is None or not str(video_id).strip():
+                raise ValueError(
+                    "Cannot perform track-level split because "
+                    f"sample '{sample.sample_id}' has no "
+                    "usable metadata.video_id."
+                )
 
+            canonical_video_id = str(video_id).strip()
             canonical_track_id = normalize_track_id(track_id)
-            if video_id:
-                return f"{video_id}::track::{canonical_track_id}"
-
-            return f"track::{canonical_track_id}"
+            return f"{canonical_video_id}::track::{canonical_track_id}"
 
         raise ValueError(
             f"Unsupported group_key: {self.group_key}"
@@ -414,7 +418,8 @@ def build_group_id(sample, group_by: str = "video") -> str:
             raise ValueError("Track-level splitting requires metadata.video_id.")
         if track_id is None:
             raise ValueError("Track-level splitting requires metadata.track_id.")
-        return f"{video_id}::track::{normalize_track_id(track_id)}"
+        canonical_video_id = str(video_id).strip()
+        return f"{canonical_video_id}::track::{normalize_track_id(track_id)}"
 
     raise ValueError("group_by must be 'video'/'video_id' or 'track'/'track_id'.")
 

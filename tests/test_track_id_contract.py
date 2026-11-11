@@ -48,6 +48,9 @@ def make_graph_sample(frame, track_id):
 def test_normalize_track_id_migrates_numeric_legacy_ids():
     assert normalize_track_id(1) == "track_1"
     assert normalize_track_id("1") == "track_1"
+    assert normalize_track_id("001") == "track_1"
+    assert normalize_track_id("000") == "track_0"
+    assert normalize_track_id("00017") == "track_17"
     assert normalize_track_id("track_1") == "track_1"
     assert normalize_track_id("bird-A") == "bird-A"
 
@@ -168,8 +171,28 @@ def test_annotation_queries_compare_canonical_track_identity():
         annotation_id="other",
     )
 
-    assert legacy.overlaps(canonical)
-    assert not legacy.overlaps(other)
+    assert legacy.overlaps(
+        canonical, video_id="video_01", other_video_id="video_01"
+    )
+    assert not legacy.overlaps(
+        other, video_id="video_01", other_video_id="video_01"
+    )
+    # Same local track ID and frame range in another video is a different
+    # individual and must not be reported as an overlap.
+    same_local_track_other_video = BehaviorAnnotation(
+        track_id="001",
+        behavior_id="feeding",
+        start_frame=15,
+        end_frame=25,
+        annotation_id="other_video",
+    )
+    assert not legacy.overlaps(
+        same_local_track_other_video,
+        video_id="video_01",
+        other_video_id="video_02",
+    )
+    with pytest.raises(TypeError):
+        legacy.overlaps(canonical)
 
     annotations = AnnotationSet(
         video_id="video_01",
@@ -179,6 +202,9 @@ def test_annotation_queries_compare_canonical_track_identity():
         "legacy", "canonical"
     }
     assert {item.annotation_id for item in annotations.for_track(1)} == {
+        "legacy", "canonical"
+    }
+    assert {item.annotation_id for item in annotations.for_track("001")} == {
         "legacy", "canonical"
     }
     assert {item.annotation_id for item in annotations.at_frame(16, track_id=1)} == {

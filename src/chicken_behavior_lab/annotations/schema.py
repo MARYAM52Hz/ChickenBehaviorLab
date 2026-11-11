@@ -90,10 +90,25 @@ class BehaviorAnnotation:
         frame_index = _validate_frame(frame_index, "frame_index")
         return self.start_frame <= frame_index <= self.end_frame
 
-    def overlaps(self, other: "BehaviorAnnotation") -> bool:
-        """Return whether two annotations overlap in time for the same track."""
+    def overlaps(
+        self,
+        other: "BehaviorAnnotation",
+        *,
+        video_id: str,
+        other_video_id: str,
+    ) -> bool:
+        """Return whether two annotations overlap for the same track and video.
+
+        Video IDs are required because track IDs are only unique within one
+        video. The caller must supply the owning video ID for each annotation;
+        annotations from different videos can never overlap as one track.
+        """
         if not isinstance(other, BehaviorAnnotation):
             raise TypeError("'other' must be a BehaviorAnnotation.")
+        video_id = _require_non_empty_string(video_id, "video_id")
+        other_video_id = _require_non_empty_string(other_video_id, "other_video_id")
+        if video_id != other_video_id:
+            return False
         same_track = normalize_track_id(self.track_id) == normalize_track_id(other.track_id)
         return same_track and self.start_frame <= other.end_frame and other.start_frame <= self.end_frame
 

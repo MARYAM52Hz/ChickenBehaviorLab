@@ -45,6 +45,8 @@ def normalize_track_id(value: str | int) -> str:
     ):
         raise ValueError("track_id contains unsupported characters or path components.")
 
-    if normalized.isdecimal():
-        return f"track_{normalized}"
+    # Decimal strings represent numeric tracker IDs; normalize their
+    # textual form so "001" and 1 resolve to the same identity.
+    if re.fullmatch(r"[0-9]+", normalized):
+        return f"track_{int(normalized)}"
     return normalized
