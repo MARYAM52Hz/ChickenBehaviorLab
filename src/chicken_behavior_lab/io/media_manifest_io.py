@@ -30,12 +30,12 @@ class MediaManifestIO:
             prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent
         )
         try:
-            with os.fdopen(descriptor, "w", encoding="utf-8", newline="\\n") as stream:
+            with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
                 json.dump(
                     manifest.to_dict(), stream, ensure_ascii=False,
                     indent=2, sort_keys=True, allow_nan=False,
                 )
-                stream.write("\\n")
+                stream.write("\n")
                 stream.flush()
                 os.fsync(stream.fileno())
             os.replace(temporary, destination)
