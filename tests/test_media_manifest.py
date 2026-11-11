@@ -156,3 +156,27 @@ def test_media_manifest_io_rejects_bad_json_and_unknown_schema(tmp_path):
 def test_media_manifest_io_requires_json_extension(tmp_path):
     with pytest.raises(ValueError, match=".json"):
         MediaManifestIO.save(MediaManifest(()), tmp_path / "manifest.txt")
+
+
+
+@pytest.mark.parametrize("relative_path", [".", "./video.mp4", "raw/./video.mp4"])
+def test_media_asset_rejects_dot_paths(relative_path):
+    with pytest.raises(ValueError):
+        MediaAsset(
+            asset_id="video_003",
+            media_type="video",
+            original_filename="video.mp4",
+            relative_path=relative_path,
+        )
+
+
+@pytest.mark.parametrize("media_type,role", [([], "original"), ("video", []), (None, "original")])
+def test_media_asset_rejects_non_string_type_and_role(media_type, role):
+    with pytest.raises(ValueError):
+        MediaAsset(
+            asset_id="asset_003",
+            media_type=media_type,
+            original_filename="video.mp4",
+            relative_path="raw/video.mp4",
+            role=role,
+        )

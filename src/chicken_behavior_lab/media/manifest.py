@@ -35,7 +35,7 @@ def _relative_path(value: str) -> str:
     if "\\" in raw:
         raise ValueError("relative_path must use forward slashes.")
     path = PurePosixPath(raw)
-    if path.is_absolute() or any(part in {".", ".."} for part in path.parts):
+    if path.as_posix() in {"", "."} or path.is_absolute() or any(part in {".", ".."} for part in raw.split("/")):
         raise ValueError("relative_path must be relative and cannot contain '.' or '..'.")
     if path.parts and re.match(r"^[A-Za-z]:", path.parts[0]):
         raise ValueError("relative_path cannot contain a Windows drive prefix.")
@@ -144,9 +144,9 @@ class MediaAsset:
         if not _ID_RE.fullmatch(asset_id) or asset_id in {".", ".."}:
             raise ValueError("asset_id may contain only letters, digits, '.', '_' and '-'.")
         object.__setattr__(self, "asset_id", asset_id)
-        if self.media_type not in _MEDIA_TYPES:
+        if not isinstance(self.media_type, str) or self.media_type not in _MEDIA_TYPES:
             raise ValueError("media_type must be 'video' or 'image'.")
-        if self.role not in _ROLES:
+        if not isinstance(self.role, str) or self.role not in _ROLES:
             raise ValueError("role must be 'original' or 'derivative'.")
 
         filename = _string(self.original_filename, "original_filename")
