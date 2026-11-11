@@ -11,6 +11,7 @@ from chicken_behavior_lab.io.graph_json import (
     GraphJsonLoader,
     load_graph_samples,
 )
+from chicken_behavior_lab.io.media_manifest_io import MediaManifestIO
 
 __all__ = [
     "load_annotations",
@@ -18,4 +19,5 @@ __all__ = [
     "ExperimentOutputWriter",
     "GraphJsonLoader",
     "load_graph_samples",
+    "MediaManifestIO",
 ]

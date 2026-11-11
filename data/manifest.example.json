@@ -1,0 +1,59 @@
+{
+  "schema_version": "1.0",
+  "assets": [
+    {
+      "asset_id": "video_001",
+      "media_type": "video",
+      "original_filename": "replace-with-original-video-filename",
+      "relative_path": "raw/videos/replace-with-original-video-filename",
+      "source_reference": {},
+      "sha256": null,
+      "file_size_bytes": null,
+      "role": "original",
+      "parent_asset_id": null,
+      "properties": {
+        "width": null,
+        "height": null,
+        "frame_count": null,
+        "average_frame_rate_num": null,
+        "average_frame_rate_den": null,
+        "time_base_num": null,
+        "time_base_den": null,
+        "duration_seconds": null,
+        "format_name": null,
+        "video_codec": null,
+        "audio_codec": null
+      },
+      "metadata": {}
+    },
+    {
+      "asset_id": "image_001",
+      "media_type": "image",
+      "original_filename": "replace-with-original-image-filename",
+      "relative_path": "raw/images/replace-with-original-image-filename",
+      "source_reference": {},
+      "sha256": null,
+      "file_size_bytes": null,
+      "role": "original",
+      "parent_asset_id": null,
+      "properties": {
+        "width": null,
+        "height": null,
+        "frame_count": null,
+        "average_frame_rate_num": null,
+        "average_frame_rate_den": null,
+        "time_base_num": null,
+        "time_base_den": null,
+        "duration_seconds": null,
+        "format_name": null,
+        "video_codec": null,
+        "audio_codec": null
+      },
+      "metadata": {}
+    }
+  ],
+  "metadata": {
+    "project": "ChickenBehaviorLab",
+    "note": "Template only; replace placeholders after source inspection."
+  }
+}

@@ -216,3 +216,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Research media and private annotation workspace (never commit raw assets)
+/data/raw/
+/data/processed/
+/data/cvat/native_exports/
+/data/annotations/
+/data/media_manifest.json
