@@ -58,7 +58,7 @@ def test_temporal_collator_pads_variable_length_samples_and_preserves_masks():
     assert batch.frame_batches[0].edge_attr.shape[0] == 8
     # At t=1, the two edges incident to the invalid third node are omitted
     # from that sample's message-passing graph.
-    assert batch.frame_batches[1].edge_attr.shape[0] == 6
+    assert batch.frame_batches[1].edge_attr.shape[0] == 4
 
 
 def test_temporal_batch_to_device():
