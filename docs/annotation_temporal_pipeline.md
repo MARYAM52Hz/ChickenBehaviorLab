@@ -42,10 +42,24 @@ Track-level splitting must use the pair `(video_id, track_id)`; track IDs alone
 are not globally unique. Label mappings are derived from training samples and
 reused unchanged for validation and test.
 
-## Legacy components
+## Legacy components and API compatibility
 
 `TemporalSequenceBuilder` and `TemporalGraphSample` remain available for
 older frame-graph workflows, but they are not part of the main annotation-level
-experiment path. The experiment configuration's `sequence_length` and
-`sequence_stride` fields are retained for compatibility and are not used to
+experiment path.
+
+`TemporalPyGDataset` accepts either one of the following homogeneous input
+collections:
+
+- `GraphSample` objects whose graph is already a `TemporalSkeletonGraph`
+  (the current annotation-level path)
+- `TemporalGraphSample` objects containing one `SkeletonGraph` per frame
+  (the legacy frame-graph path)
+
+The legacy adapter stacks frame graphs into the same `[T, V, F]` data
+contract and derives frame, node, and edge masks. A dataset must not mix the
+two sample types. Both paths can use the current `TemporalCollator`.
+
+The experiment configuration's `sequence_length` and `sequence_stride`
+fields are retained for configuration compatibility and are not used to
 re-window annotation-level samples.
