@@ -127,6 +127,17 @@ class AnnotationGraphAligner:
                 unlabeled_samples.append(graph_sample)
                 continue
 
+            if self.require_full_coverage and not self._annotations_cover_interval(
+                matched,
+                start_frame=start_frame,
+                end_frame=end_frame,
+            ):
+                raise ValueError(
+                    "Annotations do not fully cover the GraphSample interval "
+                    f"(sample_id='{graph_sample.sample_id}', "
+                    f"start_frame={start_frame}, end_frame={end_frame})."
+                )
+
             behavior_ids = tuple(sorted({item.behavior_id for item in matched}))
             if len(behavior_ids) > 1:
                 conflict = AlignmentConflict(
@@ -244,6 +255,28 @@ class AnnotationGraphAligner:
             for annotation in candidates
             if annotation.start_frame <= end_frame and annotation.end_frame >= start_frame
         ]
+
+    @staticmethod
+    def _annotations_cover_interval(
+        annotations: Sequence[BehaviorAnnotation],
+        *,
+        start_frame: int,
+        end_frame: int,
+    ) -> bool:
+        """Return whether the union of inclusive annotation intervals covers every frame."""
+        next_uncovered = start_frame
+        for annotation in sorted(
+            annotations,
+            key=lambda item: (item.start_frame, item.end_frame),
+        ):
+            if annotation.end_frame < next_uncovered:
+                continue
+            if annotation.start_frame > next_uncovered:
+                return False
+            next_uncovered = max(next_uncovered, annotation.end_frame + 1)
+            if next_uncovered > end_frame:
+                return True
+        return next_uncovered > end_frame
 
     @staticmethod
     def _apply_annotation(
