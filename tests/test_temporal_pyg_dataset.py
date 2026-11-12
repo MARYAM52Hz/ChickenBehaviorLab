@@ -162,3 +162,23 @@ def test_temporal_dataset_rejects_mixed_legacy_and_annotation_samples():
             make_sample(),
             make_legacy_temporal_sample(),
         ])
+
+
+
+def test_legacy_temporal_sequence_builder_still_feeds_temporal_pyg_dataset():
+    from chicken_behavior_lab.dataset.temporal_builder import TemporalSequenceBuilder
+
+    frame_samples = make_legacy_temporal_sample("builder_legacy", length=3).graphs
+    temporal_dataset = TemporalSequenceBuilder(
+        sequence_length=3,
+        sequence_stride=1,
+    ).build(frame_samples)
+
+    pyg_dataset = TemporalPyGDataset(temporal_dataset.samples)
+    item = pyg_dataset[0]
+
+    assert len(pyg_dataset) == 1
+    assert item.x.shape == (3, 3, 4)
+    assert item.track_id == "track_1"
+    assert item.start_frame == 200
+    assert item.end_frame == 202
