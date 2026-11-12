@@ -7,6 +7,9 @@ from chicken_behavior_lab.core.enums.keypoints import KeypointType
 from chicken_behavior_lab.features.motion import MotionFeatureFrame
 from chicken_behavior_lab.features.temporal_features import TemporalFeatureBuilder
 from chicken_behavior_lab.graphs.temporal_graph_builder import TemporalSkeletonGraphBuilder
+from chicken_behavior_lab.graphs.temporal_skeleton_graph import TemporalSkeletonGraph
+from chicken_behavior_lab.dataset.sample import GraphSample
+from chicken_behavior_lab.dataset.temporal_pyg_dataset import TemporalPyGDataset
 
 
 def make_frame(order: tuple[KeypointType, ...]) -> MotionFeatureFrame:
@@ -56,3 +59,43 @@ def test_temporal_graph_rejects_keypoint_order_with_wrong_node_count():
     graph.keypoint_types = (KeypointType.BEAK,)
     with pytest.raises(ValueError, match="length must match"):
         graph.validate()
+
+
+def make_graph(order: tuple[KeypointType, ...]) -> TemporalSkeletonGraph:
+    return TemporalSkeletonGraph(
+        node_features=np.zeros((1, len(order), 1), dtype=np.float32),
+        edge_index=np.asarray([[0], [1]], dtype=np.int64),
+        edge_features=np.zeros((1, 1, 1), dtype=np.float32),
+        frame_ids=("0",),
+        frame_mask=np.ones((1,), dtype=bool),
+        node_mask=np.ones((1, len(order)), dtype=bool),
+        keypoint_types=order,
+    )
+
+
+def make_graph_sample(sample_id: str, order: tuple[KeypointType, ...]) -> GraphSample:
+    return GraphSample(
+        graph=make_graph(order),
+        label=0,
+        behavior_id="feeding",
+        sample_id=sample_id,
+        metadata={
+            "video_id": "video_001",
+            "track_id": "track_1",
+            "start_frame": 0,
+            "end_frame": 0,
+        },
+    )
+
+
+def test_temporal_dataset_rejects_different_keypoint_orders():
+    first = (KeypointType.BEAK, KeypointType.HEAD)
+    second = (KeypointType.HEAD, KeypointType.BEAK)
+
+    with pytest.raises(ValueError, match="same keypoint order"):
+        TemporalPyGDataset(
+            [
+                make_graph_sample("sample_1", first),
+                make_graph_sample("sample_2", second),
+            ]
+        )
