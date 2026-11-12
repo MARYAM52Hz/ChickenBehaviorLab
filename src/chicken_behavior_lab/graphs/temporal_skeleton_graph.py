@@ -4,6 +4,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from chicken_behavior_lab.core.enums.keypoints import KeypointType
+
 
 @dataclass(slots=True)
 class TemporalSkeletonGraph:
@@ -15,6 +17,7 @@ class TemporalSkeletonGraph:
     frame_ids: tuple[str, ...]
     frame_mask: np.ndarray | None = None
     node_mask: np.ndarray | None = None
+    keypoint_types: tuple[KeypointType, ...] | None = None
 
     def validate(self) -> None:
         if self.node_features.ndim != 3:
@@ -34,6 +37,11 @@ class TemporalSkeletonGraph:
             raise ValueError("frame_mask must have shape (T,).")
         if self.node_mask is not None and self.node_mask.shape != (num_frames, num_nodes):
             raise ValueError("node_mask must have shape (T, V).")
+        if self.keypoint_types is not None:
+            if len(self.keypoint_types) != num_nodes:
+                raise ValueError("keypoint_types length must match the number of nodes.")
+            if len(set(self.keypoint_types)) != num_nodes:
+                raise ValueError("keypoint_types must contain unique values.")
         if num_edges and (np.any(self.edge_index < 0) or np.any(self.edge_index >= num_nodes)):
             raise ValueError("edge_index contains an invalid node.")
 
