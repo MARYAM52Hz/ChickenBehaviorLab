@@ -84,6 +84,9 @@ def make_batch() -> TemporalBatch:
             "walking",
         ],
         frame_batches=frame_batches,
+        frame_mask=torch.ones((2, 4), dtype=torch.bool),
+        node_mask=torch.ones((2, 4, 13), dtype=torch.bool),
+        edge_mask=torch.ones((2, 4, 2), dtype=torch.bool),
     )
 
 
