@@ -33,10 +33,20 @@ class TemporalPyGDataset:
 
     def _validate(self) -> None:
         sample_ids: set[str] = set()
+        expected_keypoint_types = (
+            getattr(self.samples[0].graph, "keypoint_types", None)
+            if self.samples
+            else None
+        )
         for sample in self.samples:
             if not isinstance(sample, GraphSample):
                 raise TypeError("Every item must be a GraphSample.")
             sample.validate()
+            keypoint_types = getattr(sample.graph, "keypoint_types", None)
+            if keypoint_types != expected_keypoint_types:
+                raise ValueError(
+                    "All temporal graphs in a dataset must use the same keypoint order."
+                )
             if sample.sample_id in sample_ids:
                 raise ValueError(f"Duplicate sample_id: {sample.sample_id}")
             sample_ids.add(sample.sample_id)
