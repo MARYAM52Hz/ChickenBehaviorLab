@@ -6,6 +6,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from chicken_behavior_lab.core.enums.keypoints import KeypointType
+
 from chicken_behavior_lab.features.motion import MotionFeatureFrame
 
 
@@ -17,6 +19,7 @@ class TemporalFeatureSequence:
     frame_mask: np.ndarray
     keypoint_mask: np.ndarray
     frame_ids: tuple[str, ...]
+    keypoint_types: tuple[KeypointType, ...] | None = None
 
     @property
     def temporal_length(self) -> int:
@@ -105,6 +108,7 @@ class TemporalFeatureBuilder:
             frame_mask=frame_mask,
             keypoint_mask=keypoint_mask,
             frame_ids=tuple(str(item) for item in padded_ids),
+            keypoint_types=frames[0].keypoint_types,
         )
 
     @staticmethod
@@ -114,6 +118,12 @@ class TemporalFeatureBuilder:
             raise ValueError("Each frame.features array must have shape (num_keypoints, feature_dimension).")
         expected_keypoints = first.num_keypoints
         expected_features = first.feature_dimension
+        expected_keypoint_types = first.keypoint_types
+        if expected_keypoint_types is not None and (
+            len(expected_keypoint_types) != expected_keypoints
+            or len(set(expected_keypoint_types)) != expected_keypoints
+        ):
+            raise ValueError("frame 0.keypoint_types must uniquely identify every keypoint.")
 
         for index, frame in enumerate(frames):
             if frame.features.ndim != 2:
@@ -122,6 +132,11 @@ class TemporalFeatureBuilder:
                 raise ValueError(
                     f"Inconsistent number of keypoints at frame {index}: "
                     f"expected {expected_keypoints}, got {frame.num_keypoints}."
+                )
+            if frame.keypoint_types != expected_keypoint_types:
+                raise ValueError(
+                    f"Inconsistent keypoint order at frame {index}: "
+                    "all frames must use the same keypoint_types."
                 )
             if frame.feature_dimension != expected_features:
                 raise ValueError(
