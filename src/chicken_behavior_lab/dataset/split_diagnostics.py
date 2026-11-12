@@ -89,11 +89,13 @@ def _group_id(sample: GraphSample, group_key: str) -> str:
 
         # Track identifiers may repeat across videos, so include video_id.
         video_id = metadata.get("video_id")
+        if video_id is None or not str(video_id).strip():
+            raise ValueError(
+                f"Sample {sample.sample_id!r} has no valid video_id "
+                "required for track-level split diagnostics."
+            )
         canonical_track_id = normalize_track_id(track_id)
-        if video_id is not None and str(video_id).strip():
-            return f"{video_id}::track::{canonical_track_id}"
-
-        return canonical_track_id
+        return f"{video_id}::track::{canonical_track_id}"
 
     raise ValueError("group_key must be either 'video_id' or 'track_id'.")
 
