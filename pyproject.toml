@@ -28,6 +28,7 @@ vision = [
 learning = [
     "torch>=2.2",
     "torch-geometric>=2.5",
+    "scikit-learn>=1.3",
 ]
 analysis = [
     "scipy>=1.10",
