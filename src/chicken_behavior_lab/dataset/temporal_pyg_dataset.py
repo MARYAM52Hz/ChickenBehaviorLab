@@ -243,6 +243,12 @@ class TemporalPyGDataset:
                 )
 
             features = np.asarray(graph.node_features, dtype=np.float32)
+            if features.ndim != 2:
+                raise ValueError(
+                    "Legacy TemporalGraphSample must contain one SkeletonGraph "
+                    f"with node_features shaped (V, F) per frame; got {features.shape} "
+                    f"at frame {frame_index}."
+                )
             finite_nodes = np.all(np.isfinite(features), axis=-1)
             valid_nodes = (
                 np.asarray(graph.node_mask, dtype=bool)
