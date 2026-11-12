@@ -4,47 +4,39 @@ import numpy as np
 import torch
 
 from chicken_behavior_lab.dataset.sample import GraphSample
-from chicken_behavior_lab.dataset.temporal_builder import TemporalSequenceBuilder
 from chicken_behavior_lab.dataset.temporal_collate import make_temporal_dataloader
 from chicken_behavior_lab.dataset.temporal_pyg_dataset import TemporalPyGDataset
+from chicken_behavior_lab.graph.graph import TemporalSkeletonGraph
 
 
-class FrameGraph:
-    def __init__(self, frame_id: int) -> None:
-        rng = np.random.default_rng(frame_id)
-        self.node_features = rng.normal(size=(13, 8)).astype(np.float32)
-        self.edge_index = np.asarray([[0, 1, 2], [1, 2, 3]], dtype=np.int64)
-        self.edge_features = rng.normal(size=(3, 4)).astype(np.float32)
-
-    def validate(self) -> None:
-        if self.node_features.shape != (13, 8) or self.edge_features.shape != (3, 4):
-            raise ValueError("Unexpected graph feature shape.")
-
-
-def make_samples(number_of_frames: int = 16) -> list[GraphSample]:
-    return [
-        GraphSample(
-            graph=FrameGraph(index),
-            label=0,
-            behavior_id="feeding",
-            sample_id=f"sample_{index}",
-            metadata={
-                "video_id": "video_001",
-                "track_id": "track_1",
-                "start_frame": index,
-                "end_frame": index,
-            },
-        )
-        for index in range(number_of_frames)
-    ]
+def make_sample(sample_id: str, length: int, start: int) -> GraphSample:
+    rng = np.random.default_rng(start)
+    graph = TemporalSkeletonGraph(
+        node_features=rng.normal(size=(length, 13, 8)).astype(np.float32),
+        edge_index=np.asarray([[0, 1, 2], [1, 2, 3]], dtype=np.int64),
+        frame_mask=np.ones(length, dtype=bool),
+        node_mask=np.ones((length, 13), dtype=bool),
+        edge_features=rng.normal(size=(length, 3, 4)).astype(np.float32),
+    )
+    return GraphSample(
+        graph=graph,
+        label=0,
+        behavior_id="feeding",
+        sample_id=sample_id,
+        metadata={
+            "video_id": f"video_{sample_id}",
+            "track_id": "track_1",
+            "start_frame": start,
+            "end_frame": start + length - 1,
+        },
+    )
 
 
 def make_loader(batch_size: int = 2):
-    windows = TemporalSequenceBuilder(
-        sequence_length=8,
-        sequence_stride=4,
-    ).build(make_samples())
-    dataset = TemporalPyGDataset(windows.samples)
+    dataset = TemporalPyGDataset([
+        make_sample("short", 5, 0),
+        make_sample("long", 8, 10),
+    ])
     return make_temporal_dataloader(dataset, batch_size=batch_size, shuffle=False)
 
 
@@ -55,6 +47,7 @@ def test_temporal_dataloader_shapes_and_track_identity():
     assert batch.edge_attr.shape == (2, 8, 3, 4)
     assert batch.y.shape == (2,)
     assert len(batch.frame_batches) == 8
+    assert batch.frame_mask[0].tolist() == [True] * 5 + [False] * 3
     assert batch.track_id == ["track_1", "track_1"]
     assert batch.frame_batches[0].num_graphs == 2
     assert batch.frame_batches[0].x.shape == (26, 8)
@@ -66,5 +59,6 @@ def test_temporal_batch_to_device_keeps_track_ids_as_strings():
     moved = batch.to(torch.device("cpu"))
     assert moved.x.device.type == "cpu"
     assert moved.edge_index.device.type == "cpu"
+    assert moved.frame_mask.device.type == "cpu"
     assert moved.frame_batches[0].x.device.type == "cpu"
     assert moved.track_id == ["track_1"]
