@@ -1,4 +1,4 @@
-"""Build fixed-length T × V × F sequences with explicit validity masks."""
+"""Build annotation-length or explicitly fixed-length T × V × F sequences."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from chicken_behavior_lab.features.motion import MotionFeatureFrame
 
 @dataclass(slots=True)
 class TemporalFeatureSequence:
-    """Fixed-length temporal feature sequence."""
+    """Temporal feature sequence with explicit frame and keypoint validity masks."""
 
     features: np.ndarray
     frame_mask: np.ndarray
@@ -36,11 +36,20 @@ class TemporalFeatureSequence:
 
 
 class TemporalFeatureBuilder:
-    """Build right-aligned, fixed-length temporal feature sequences."""
+    """Build temporal features.
 
-    def __init__(self, sequence_length: int = 60) -> None:
-        if isinstance(sequence_length, bool) or not isinstance(sequence_length, int) or sequence_length <= 0:
-            raise ValueError("sequence_length must be a positive integer.")
+    By default, preserve every frame supplied for an annotation. Set a
+    positive sequence_length only for legacy fixed-length truncation/padding.
+    Batch padding belongs to TemporalCollator, not this feature builder.
+    """
+
+    def __init__(self, sequence_length: int | None = None) -> None:
+        if sequence_length is not None and (
+            isinstance(sequence_length, bool)
+            or not isinstance(sequence_length, int)
+            or sequence_length <= 0
+        ):
+            raise ValueError("sequence_length must be a positive integer or None.")
         self.sequence_length = sequence_length
 
     def build(
@@ -59,16 +68,22 @@ class TemporalFeatureBuilder:
         if len(frame_ids) != len(frames):
             raise ValueError("frame_ids must have the same length as frames.")
 
-        selected_frames = frames[-self.sequence_length:]
-        selected_ids = frame_ids[-self.sequence_length:]
+        if self.sequence_length is None:
+            target_length = len(frames)
+            selected_frames = frames
+            selected_ids = frame_ids
+        else:
+            target_length = self.sequence_length
+            selected_frames = frames[-target_length:]
+            selected_ids = frame_ids[-target_length:]
         actual_length = len(selected_frames)
-        start_index = self.sequence_length - actual_length
+        start_index = target_length - actual_length
 
         features = np.zeros(
-            (self.sequence_length, num_keypoints, feature_dimension), dtype=np.float32
+            (target_length, num_keypoints, feature_dimension), dtype=np.float32
         )
-        frame_mask = np.zeros((self.sequence_length,), dtype=bool)
-        keypoint_mask = np.zeros((self.sequence_length, num_keypoints), dtype=bool)
+        frame_mask = np.zeros((target_length,), dtype=bool)
+        keypoint_mask = np.zeros((target_length, num_keypoints), dtype=bool)
 
         for index, frame in enumerate(selected_frames):
             target_index = start_index + index
