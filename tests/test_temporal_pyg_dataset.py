@@ -4,8 +4,9 @@ import numpy as np
 import pytest
 
 from chicken_behavior_lab.dataset.sample import GraphSample
+from chicken_behavior_lab.dataset.temporal_sample import TemporalGraphSample
 from chicken_behavior_lab.dataset.temporal_pyg_dataset import TemporalPyGDataset
-from chicken_behavior_lab.graph.graph import TemporalSkeletonGraph
+from chicken_behavior_lab.graph.graph import SkeletonGraph, TemporalSkeletonGraph
 
 
 def make_sample(sample_id="sample_01", length=5, behavior_id="feeding", label=0):
@@ -79,3 +80,85 @@ def test_dataset_rejects_sample_without_valid_frames():
     sample.graph.frame_mask[:] = False
     with pytest.raises(ValueError, match="no valid frames"):
         TemporalPyGDataset([sample])[0]
+
+
+
+def make_legacy_temporal_sample(sample_id="legacy_01", length=3):
+    graphs = []
+    for frame in range(length):
+        node_mask = np.asarray([True, True, frame != 1], dtype=bool)
+        graph = SkeletonGraph(
+            node_features=np.full((3, 4), frame, dtype=np.float32),
+            edge_index=np.asarray([[0, 1], [1, 2]], dtype=np.int64),
+            edge_features=np.full((2, 2), frame, dtype=np.float32),
+            node_mask=node_mask,
+        )
+        graphs.append(
+            GraphSample(
+                graph=graph,
+                label=0,
+                behavior_id="feeding",
+                sample_id=f"{sample_id}_frame_{frame}",
+                metadata={
+                    "video_id": "video_legacy",
+                    "track_id": 1,
+                    "start_frame": 200 + frame,
+                    "end_frame": 200 + frame,
+                },
+            )
+        )
+
+    return TemporalGraphSample(
+        graphs=graphs,
+        label=0,
+        behavior_id="feeding",
+        sample_id=sample_id,
+        metadata={
+            "video_id": "video_legacy",
+            "track_id": "track_1",
+            "start_frame": 200,
+            "end_frame": 200 + length - 1,
+        },
+    )
+
+
+def test_dataset_keeps_legacy_temporal_graph_sample_api():
+    dataset = TemporalPyGDataset([make_legacy_temporal_sample()])
+    item = dataset[0]
+
+    assert len(dataset) == 1
+    assert item.x.shape == (3, 3, 4)
+    assert item.edge_attr.shape == (3, 2, 2)
+    assert item.frame_mask.tolist() == [True, True, True]
+    assert item.node_mask[1].tolist() == [True, True, False]
+    assert item.edge_mask[1].tolist() == [True, False]
+    assert item.track_id == "track_1"
+    assert item.start_frame == 200
+    assert item.end_frame == 202
+
+
+def test_legacy_temporal_samples_work_with_current_temporal_collator():
+    from chicken_behavior_lab.dataset.temporal_collate import make_temporal_dataloader
+
+    dataset = TemporalPyGDataset([
+        make_legacy_temporal_sample("legacy_short", length=2),
+        make_legacy_temporal_sample("legacy_long", length=3),
+    ])
+    batch = next(
+        iter(make_temporal_dataloader(dataset, batch_size=2, shuffle=False))
+    )
+
+    assert batch.x.shape == (2, 3, 3, 4)
+    assert batch.frame_mask.tolist() == [
+        [True, True, False],
+        [True, True, True],
+    ]
+    assert batch.track_id == ["track_1", "track_1"]
+
+
+def test_temporal_dataset_rejects_mixed_legacy_and_annotation_samples():
+    with pytest.raises(TypeError, match="cannot mix"):
+        TemporalPyGDataset([
+            make_sample(),
+            make_legacy_temporal_sample(),
+        ])
