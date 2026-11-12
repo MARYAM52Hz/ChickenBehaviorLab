@@ -77,6 +77,7 @@ class TemporalSkeletonGraphBuilder:
             frame_ids=sequence.frame_ids,
             frame_mask=sequence.frame_mask.copy(),
             node_mask=sequence.keypoint_mask.copy(),
+            keypoint_types=sequence.keypoint_types,
         )
 
         graph.validate()
