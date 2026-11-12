@@ -195,3 +195,34 @@ def test_none_graph_raises_error(encoder, feeding_annotation):
 def test_graph_is_validated(dataset_builder, feeding_annotation):
     sample = dataset_builder.build_sample(feeding_annotation, video_id="video_001")
     assert sample.graph.validation_called is True
+
+
+def test_adjacent_annotations_with_same_behavior_remain_separate_samples(dataset_builder):
+    annotations = AnnotationSet(
+        video_id="video_001",
+        annotations=(
+            BehaviorAnnotation(
+                annotation_id="feeding_001",
+                track_id=1,
+                behavior_id="feeding",
+                start_frame=0,
+                end_frame=9,
+            ),
+            BehaviorAnnotation(
+                annotation_id="feeding_002",
+                track_id=1,
+                behavior_id="feeding",
+                start_frame=10,
+                end_frame=19,
+            ),
+        ),
+    )
+
+    dataset = dataset_builder.build(annotations)
+
+    assert len(dataset) == 2
+    assert dataset.sample_ids == [
+        "video_001_track_1_feeding_001",
+        "video_001_track_1_feeding_002",
+    ]
+    assert [sample.metadata["num_frames"] for sample in dataset] == [10, 10]
