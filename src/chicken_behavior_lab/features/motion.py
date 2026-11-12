@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from chicken_behavior_lab.core.enums.keypoints import KeypointType
 from chicken_behavior_lab.features.acceleration import AccelerationFeatureExtractor
 from chicken_behavior_lab.features.angles import JointAngleFeatureExtractor
 from chicken_behavior_lab.features.position import PositionFeatureExtractor
@@ -22,6 +23,7 @@ class MotionFeatureFrame:
     angle_valid_mask: np.ndarray
     feature_names: tuple[str, ...]
     keypoint_mask: np.ndarray | None = None
+    keypoint_types: tuple[KeypointType, ...] | None = None
 
     @property
     def num_keypoints(self) -> int:
@@ -111,6 +113,7 @@ class MotionFeatureExtractor:
             angle_valid_mask=angle_valid_mask,
             feature_names=self.FEATURE_NAMES,
             keypoint_mask=row_valid_mask,
+            keypoint_types=position.keypoint_types,
         )
 
     @staticmethod
