@@ -42,3 +42,7 @@ def test_track_level_diagnostics_include_video_in_group_identity():
 
     assert report.group_counts == {"train": 1, "validation": 1, "test": 1}
     assert not report.has_group_leakage
+    assert report.class_group_counts == {"feeding": 3}
+    assert report.class_split_coverage == {
+        "feeding": {"train": True, "validation": True, "test": True}
+    }
