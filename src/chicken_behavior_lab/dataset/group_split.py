@@ -90,9 +90,11 @@ def stratified_group_assignment(
             if split_class_counts[0][label] == 0:
                 score += 8.0
             required_coverage = min(n_splits, class_group_counts[label])
-            for index in range(required_coverage):
-                if split_class_groups[index][label] == 0:
-                    score += 1.25
+            actual_coverage = sum(
+                split_class_groups[index][label] > 0
+                for index in range(n_splits)
+            )
+            score += 1.25 * max(0, required_coverage - actual_coverage)
 
         return score
 
