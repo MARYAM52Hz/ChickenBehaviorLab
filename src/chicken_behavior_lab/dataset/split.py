@@ -119,13 +119,21 @@ def group_train_validation_split(
             "train/validation group split."
         )
 
-    group_labels = {
-        group_id: [
-            str(getattr(samples[index], "behavior_id", samples[index].label))
-            for index in indices
-        ]
-        for group_id, indices in group_to_indices.items()
-    }
+    group_labels: dict[str, list[str]] = {}
+    for group_id, indices in group_to_indices.items():
+        labels: list[str] = []
+        for index in indices:
+            sample = samples[index]
+            behavior_id = getattr(sample, "behavior_id", None)
+            if behavior_id is None:
+                behavior_id = getattr(sample, "label", None)
+            if behavior_id is None:
+                raise ValueError(
+                    "Stratified group splitting requires every sample "
+                    "to expose behavior_id or label."
+                )
+            labels.append(str(behavior_id))
+        group_labels[group_id] = labels
     assignment = stratified_group_assignment(
         group_labels,
         (1.0 - validation_fraction, validation_fraction),
