@@ -8,7 +8,10 @@ from torch.utils.data import (
     random_split,
 )
 
-from chicken_behavior_lab.dataset.group_split import build_group_id
+from chicken_behavior_lab.dataset.group_split import (
+    build_group_id,
+    stratified_group_assignment,
+)
 
 
 def train_validation_split(
@@ -116,26 +119,26 @@ def group_train_validation_split(
             "train/validation group split."
         )
 
-    import random
-
-    shuffled_groups = list(groups)
-    random.Random(random_seed).shuffle(shuffled_groups)
-
-    validation_group_count = max(
-        1,
-        int(len(shuffled_groups) * validation_fraction),
+    group_labels = {
+        group_id: [
+            str(getattr(samples[index], "behavior_id", samples[index].label))
+            for index in indices
+        ]
+        for group_id, indices in group_to_indices.items()
+    }
+    assignment = stratified_group_assignment(
+        group_labels,
+        (1.0 - validation_fraction, validation_fraction),
+        seed=random_seed,
     )
-    validation_group_count = min(
-        validation_group_count,
-        len(shuffled_groups) - 1,
-    )
-
-    validation_groups = set(
-        shuffled_groups[:validation_group_count]
-    )
-    train_groups = set(
-        shuffled_groups[validation_group_count:]
-    )
+    train_groups = {
+        group_id for group_id, split_index in assignment.items()
+        if split_index == 0
+    }
+    validation_groups = {
+        group_id for group_id, split_index in assignment.items()
+        if split_index == 1
+    }
 
     train_indices: list[int] = []
     validation_indices: list[int] = []
