@@ -15,11 +15,9 @@ class PyGGraphDataset:
     Adapter between ChickenBehaviorLab GraphSample objects
     and PyTorch Geometric Data objects.
 
-    The class adapts one-frame GraphSamples to PyG Data objects.
-    Multi-frame samples belong in TemporalPyGDataset.
-
-    Sample metadata is kept as explicit Data attributes instead of
-    passing arbitrary dictionaries through PyG batching.
+    The class deliberately keeps sample metadata as explicit
+    Data attributes instead of passing arbitrary dictionaries
+    through PyG batching.
     """
 
     def __init__(
@@ -96,13 +94,6 @@ class PyGGraphDataset:
 
         graph.validate()
 
-        if graph.node_features.shape[0] != 1:
-            raise ValueError(
-                "PyGGraphDataset is a frame-level adapter and requires "
-                "exactly one frame per GraphSample; use TemporalPyGDataset "
-                "for multi-frame samples."
-            )
-
         metadata = sample.metadata or {}
 
         video_id = str(
@@ -131,7 +122,7 @@ class PyGGraphDataset:
 
         data = Data(
             x=torch.as_tensor(
-                graph.node_features[0],
+                graph.node_features,
                 dtype=torch.float32,
             ),
             edge_index=torch.as_tensor(
@@ -146,7 +137,7 @@ class PyGGraphDataset:
 
         if graph.edge_features is not None:
             data.edge_attr = torch.as_tensor(
-                graph.edge_features[0],
+                graph.edge_features,
                 dtype=torch.float32,
             )
 
@@ -187,3 +178,36 @@ class PyGGraphDataset:
             metadata_list.append(metadata)
 
         return metadata_list
+
+
+
+class FrameGraphDataset(PyGGraphDataset):
+    """Frame-level view of one-frame GraphSamples for spatial GNNs.
+
+    PyGGraphDataset retains the temporal dimension for compatibility with
+    existing consumers. This adapter removes that dimension only when it is
+    exactly one; it rejects multi-frame samples rather than silently
+    discarding temporal information.
+    """
+
+    def __getitem__(self, index: int) -> Data:
+        data = super().__getitem__(index)
+
+        if data.x.ndim != 3 or data.x.shape[0] != 1:
+            raise ValueError(
+                "FrameGraphDataset requires exactly one frame per sample; "
+                "use TemporalPyGDataset for multi-frame samples."
+            )
+
+        data.x = data.x[0]
+
+        edge_attr = getattr(data, "edge_attr", None)
+        if edge_attr is not None:
+            if edge_attr.ndim != 3 or edge_attr.shape[0] != 1:
+                raise ValueError(
+                    "FrameGraphDataset requires edge_attr with exactly "
+                    "one temporal frame."
+                )
+            data.edge_attr = edge_attr[0]
+
+        return data

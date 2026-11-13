@@ -100,9 +100,9 @@ def test_pyg_dataset_adapts_factory_graph_samples(tmp_path):
     dataset = PyGGraphDataset(samples)
     assert len(dataset) == 1
     data = dataset[0]
-    assert data.x.shape == (6, 7)
+    assert data.x.shape == (1, 6, 7)
     assert data.edge_index.shape == (2, 6)
-    assert data.edge_attr.shape == (6, 8)
+    assert data.edge_attr.shape == (1, 6, 8)
     assert data.y.dtype == torch.long
     assert data.y.item() == 0
     assert data.track_id == "track_1"
@@ -126,35 +126,3 @@ def test_dataset_factory_rejects_manifest_with_unknown_label(tmp_path):
     except ValueError as error:
         assert "absent from label_to_index" in str(error)
 
-
-
-def test_pyg_dataset_rejects_multi_frame_samples(tmp_path):
-    import pytest
-
-    feature_root = tmp_path / "features"
-    feature_root.mkdir()
-    node_features = np.zeros((2, 6, 7), dtype=np.float32)
-    edge_index = np.array(
-        [[0, 1, 2, 3, 4, 5], [1, 0, 3, 2, 5, 4]],
-        dtype=np.int64,
-    )
-    edge_attr = np.zeros((2, 6, 8), dtype=np.float32)
-    np.savez(
-        feature_root / "sequence.npz",
-        node_features=node_features,
-        edge_index=edge_index,
-        edge_attr=edge_attr,
-    )
-    manifest = tmp_path / "annotations.json"
-    write_manifest(manifest, [{
-        "sample_id": "sequence",
-        "track_id": 1,
-        "video_id": "video_001",
-        "feature_file": "sequence.npz",
-        "label": "walking",
-    }])
-
-    samples = DatasetFactory(manifest, feature_root).build()
-
-    with pytest.raises(ValueError, match="frame-level adapter"):
-        PyGGraphDataset(samples)[0]

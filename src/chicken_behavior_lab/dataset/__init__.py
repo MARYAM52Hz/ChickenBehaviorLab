@@ -15,6 +15,7 @@ _EXPORTS = {
     "AnnotationRecord": (".factory", "AnnotationRecord"),
     "GraphDataset": (".graph_dataset", "GraphDataset"),
     "PyGGraphDataset": (".pyg_dataset", "PyGGraphDataset"),
+    "FrameGraphDataset": (".pyg_dataset", "FrameGraphDataset"),
     "TemporalGraphSample": (".temporal_sample", "TemporalGraphSample"),
     "TemporalGraphDataset": (".temporal_dataset", "TemporalGraphDataset"),
     "TemporalSequenceBuilder": (".temporal_builder", "TemporalSequenceBuilder"),

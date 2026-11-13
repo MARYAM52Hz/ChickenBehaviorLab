@@ -12,7 +12,7 @@ from torch_geometric.loader import (
 
 from chicken_behavior_lab.dataset import (
     DatasetFactory,
-    PyGGraphDataset,
+    FrameGraphDataset,
 )
 from chicken_behavior_lab.dataset.split import (
     group_train_validation_split,
@@ -185,7 +185,7 @@ def main(argv=None):
             "required for training."
         )
 
-    dataset = PyGGraphDataset(
+    dataset = FrameGraphDataset(
         samples
     )
 

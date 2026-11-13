@@ -2,6 +2,7 @@ import numpy as np
 import torch
 
 from chicken_behavior_lab.dataset import (
+    FrameGraphDataset,
     GraphSample,
     PyGGraphDataset,
 )
@@ -198,3 +199,33 @@ def test_pyg_dataset_preserves_values():
         data.x,
         expected_x,
     )
+
+
+
+def test_frame_graph_dataset_squeezes_single_frame_graph():
+    graph = create_graph()
+    single_frame_graph = TemporalSkeletonGraph(
+        node_features=graph.node_features[:1],
+        edge_index=graph.edge_index,
+        edge_features=graph.edge_features[:1],
+        frame_ids=("100",),
+    )
+    sample = GraphSample(
+        graph=single_frame_graph,
+        label=2,
+        behavior_id="standing",
+        sample_id="single_frame",
+        metadata={"video_id": "video_001", "track_id": 1},
+    )
+
+    data = FrameGraphDataset([sample])[0]
+
+    assert data.x.shape == (3, 2)
+    assert data.edge_attr.shape == (2, 2)
+
+
+def test_frame_graph_dataset_rejects_multi_frame_graph():
+    import pytest
+
+    with pytest.raises(ValueError, match="exactly one frame"):
+        FrameGraphDataset([create_sample()])[0]
