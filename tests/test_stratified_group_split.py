@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import numpy as np
-
 from chicken_behavior_lab.dataset.group_split import GroupAwareSplitter
 from chicken_behavior_lab.dataset.sample import GraphSample
 from chicken_behavior_lab.dataset.split import group_train_validation_split
