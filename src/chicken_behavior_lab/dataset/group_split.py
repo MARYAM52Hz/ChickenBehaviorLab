@@ -128,28 +128,32 @@ def stratified_group_assignment(
                 candidate_costs.append((cost(trial), rng.random(), split_index))
             assignment[group] = min(candidate_costs)[2]
 
-        improved = True
-        while improved:
-            improved = False
-            current_cost = cost(assignment)
-            best_move = None
-            best_move_cost = current_cost
-            for group in groups:
-                source = assignment[group]
-                if sum(value == source for value in assignment.values()) <= 1:
-                    continue
-                for destination in range(n_splits):
-                    if destination == source:
+        # Exhaustive single-group relocation is useful for small datasets,
+        # but its repeated full-cost evaluation scales cubically. For larger
+        # collections, rely on independent greedy restarts instead.
+        if len(groups) <= 32:
+            improved = True
+            while improved:
+                improved = False
+                current_cost = cost(assignment)
+                best_move = None
+                best_move_cost = current_cost
+                for group in groups:
+                    source = assignment[group]
+                    if sum(value == source for value in assignment.values()) <= 1:
                         continue
-                    trial = dict(assignment)
-                    trial[group] = destination
-                    trial_cost = cost(trial)
-                    if trial_cost < best_move_cost - 1e-12:
-                        best_move = (group, destination)
-                        best_move_cost = trial_cost
-            if best_move is not None:
-                assignment[best_move[0]] = best_move[1]
-                improved = True
+                    for destination in range(n_splits):
+                        if destination == source:
+                            continue
+                        trial = dict(assignment)
+                        trial[group] = destination
+                        trial_cost = cost(trial)
+                        if trial_cost < best_move_cost - 1e-12:
+                            best_move = (group, destination)
+                            best_move_cost = trial_cost
+                if best_move is not None:
+                    assignment[best_move[0]] = best_move[1]
+                    improved = True
 
         final_cost = cost(assignment)
         if final_cost < best_cost:
