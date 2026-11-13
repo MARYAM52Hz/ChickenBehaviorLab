@@ -63,29 +63,31 @@ def split_dataset_by_group(
         )
 
     sample_groups: list[str] = []
+    group_labels: dict[str, list[str]] = {}
 
-    for index in range(
-        len(dataset)
-    ):
+    for index in range(len(dataset)):
         sample = dataset[index]
+        group_id = build_group_id(sample, group_by=group_by)
+        sample_groups.append(group_id)
 
-        sample_groups.append(
-            build_group_id(
-                sample,
-                group_by=group_by,
+        behavior_id = getattr(sample, "behavior_id", None)
+        if behavior_id is None:
+            behavior_id = getattr(sample, "label", None)
+        if behavior_id is None:
+            raise ValueError(
+                "Stratified group splitting requires each sample to expose "
+                "behavior_id or label."
             )
-        )
+        group_labels.setdefault(group_id, []).append(str(behavior_id))
 
-    unique_groups = sorted(
-        set(sample_groups)
-    )
-
+    unique_groups = sorted(set(sample_groups))
     split_groups = split_group_ids(
         unique_groups,
         train_ratio=train_ratio,
         validation_ratio=validation_ratio,
         test_ratio=test_ratio,
         seed=seed,
+        group_labels=group_labels,
     )
 
     train_set = set(
