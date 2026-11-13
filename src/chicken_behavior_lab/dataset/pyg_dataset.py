@@ -15,9 +15,11 @@ class PyGGraphDataset:
     Adapter between ChickenBehaviorLab GraphSample objects
     and PyTorch Geometric Data objects.
 
-    The class deliberately keeps sample metadata as explicit
-    Data attributes instead of passing arbitrary dictionaries
-    through PyG batching.
+    The class adapts one-frame GraphSamples to PyG Data objects.
+    Multi-frame samples belong in TemporalPyGDataset.
+
+    Sample metadata is kept as explicit Data attributes instead of
+    passing arbitrary dictionaries through PyG batching.
     """
 
     def __init__(
@@ -94,6 +96,13 @@ class PyGGraphDataset:
 
         graph.validate()
 
+        if graph.node_features.shape[0] != 1:
+            raise ValueError(
+                "PyGGraphDataset is a frame-level adapter and requires "
+                "exactly one frame per GraphSample; use TemporalPyGDataset "
+                "for multi-frame samples."
+            )
+
         metadata = sample.metadata or {}
 
         video_id = str(
@@ -122,7 +131,7 @@ class PyGGraphDataset:
 
         data = Data(
             x=torch.as_tensor(
-                graph.node_features,
+                graph.node_features[0],
                 dtype=torch.float32,
             ),
             edge_index=torch.as_tensor(
@@ -137,7 +146,7 @@ class PyGGraphDataset:
 
         if graph.edge_features is not None:
             data.edge_attr = torch.as_tensor(
-                graph.edge_features,
+                graph.edge_features[0],
                 dtype=torch.float32,
             )
 

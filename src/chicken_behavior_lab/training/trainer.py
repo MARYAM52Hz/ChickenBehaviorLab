@@ -343,6 +343,25 @@ class Trainer:
         if isinstance(batch, TemporalBatch):
             return self.model(batch)
 
+        # PyTorch Geometric batches expose graph tensors as attributes.
+        # Pass those tensors explicitly to graph models such as
+        # ChickenBehaviorGNN, whose forward signature is
+        # forward(x, edge_index, edge_attr, batch=None).
+        if hasattr(batch, "x") and hasattr(batch, "edge_index"):
+            edge_attr = getattr(batch, "edge_attr", None)
+            if edge_attr is None:
+                raise ValueError(
+                    "PyG graph batches must provide edge_attr for graph "
+                    "models trained through Trainer."
+                )
+
+            return self.model(
+                batch.x,
+                batch.edge_index,
+                edge_attr,
+                getattr(batch, "batch", None),
+            )
+
         return self.model(batch)
 
     @staticmethod
