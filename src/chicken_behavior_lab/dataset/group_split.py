@@ -10,6 +10,154 @@ from chicken_behavior_lab.core.identifiers import normalize_track_id
 GroupKey = Literal["video_id", "track_id"]
 
 
+def stratified_group_assignment(
+    group_labels: dict[str, Sequence[str]],
+    ratios: Sequence[float],
+    *,
+    seed: int = 42,
+    n_restarts: int = 64,
+) -> dict[str, int]:
+    """Assign whole groups to splits while approximately balancing classes."""
+    import random
+    from collections import Counter
+
+    if not group_labels:
+        raise ValueError("Cannot stratify an empty group mapping.")
+    if len(ratios) < 2 or any(
+        isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0
+        for value in ratios
+    ):
+        raise ValueError("At least two positive split ratios are required.")
+    if abs(sum(ratios) - 1.0) > 1e-8:
+        raise ValueError("Split ratios must sum to 1.0.")
+    if len(group_labels) < len(ratios):
+        raise ValueError(
+            f"At least {len(ratios)} distinct groups are required for "
+            f"{len(ratios)}-way splitting."
+        )
+    if n_restarts < 1:
+        raise ValueError("n_restarts must be at least 1.")
+
+    groups = sorted(group_labels)
+    labels_by_group = {
+        group: tuple(str(label) for label in group_labels[group])
+        for group in groups
+    }
+    if any(not labels for labels in labels_by_group.values()):
+        raise ValueError("Every group must contain at least one labeled sample.")
+
+    total_classes = Counter(
+        label for labels in labels_by_group.values() for label in labels
+    )
+    class_group_counts = Counter(
+        label for labels in labels_by_group.values() for label in set(labels)
+    )
+    total_samples = sum(len(labels) for labels in labels_by_group.values())
+    n_splits = len(ratios)
+
+    def cost(assignment: dict[str, int]) -> float:
+        split_class_counts = [Counter() for _ in ratios]
+        split_group_counts = [0 for _ in ratios]
+        split_sample_counts = [0 for _ in ratios]
+        split_class_groups = [Counter() for _ in ratios]
+        for group, split_index in assignment.items():
+            labels = labels_by_group[group]
+            split_group_counts[split_index] += 1
+            split_sample_counts[split_index] += len(labels)
+            split_class_counts[split_index].update(labels)
+            split_class_groups[split_index].update(set(labels))
+
+        score = 0.0
+        for index, ratio in enumerate(ratios):
+            if split_group_counts[index] == 0:
+                score += 100.0
+            group_error = (
+                split_group_counts[index] - len(groups) * ratio
+            ) / max(len(groups), 1)
+            sample_error = (
+                split_sample_counts[index] - total_samples * ratio
+            ) / max(total_samples, 1)
+            score += 0.35 * group_error**2 + 0.65 * sample_error**2
+
+        for label, total_count in total_classes.items():
+            for index, ratio in enumerate(ratios):
+                target = total_count * ratio
+                error = (
+                    split_class_counts[index][label] - target
+                ) / max(total_count, 1)
+                score += 1.5 * error**2
+
+            if split_class_counts[0][label] == 0:
+                score += 8.0
+            required_coverage = min(n_splits, class_group_counts[label])
+            for index in range(required_coverage):
+                if split_class_groups[index][label] == 0:
+                    score += 1.25
+
+        return score
+
+    best_assignment: dict[str, int] | None = None
+    best_cost = float("inf")
+    base_rng = random.Random(seed)
+    rarity = {
+        group: sum(
+            1.0 / class_group_counts[label]
+            for label in set(labels_by_group[group])
+        )
+        for group in groups
+    }
+
+    for _ in range(n_restarts):
+        rng = random.Random(base_rng.randrange(0, 2**32))
+        ordered = sorted(
+            groups,
+            key=lambda group: (
+                -rarity[group],
+                -len(labels_by_group[group]),
+                rng.random(),
+            ),
+        )
+        assignment: dict[str, int] = {}
+        for group in ordered:
+            candidate_costs = []
+            for split_index in range(n_splits):
+                trial = dict(assignment)
+                trial[group] = split_index
+                candidate_costs.append((cost(trial), rng.random(), split_index))
+            assignment[group] = min(candidate_costs)[2]
+
+        improved = True
+        while improved:
+            improved = False
+            current_cost = cost(assignment)
+            best_move = None
+            best_move_cost = current_cost
+            for group in groups:
+                source = assignment[group]
+                if sum(value == source for value in assignment.values()) <= 1:
+                    continue
+                for destination in range(n_splits):
+                    if destination == source:
+                        continue
+                    trial = dict(assignment)
+                    trial[group] = destination
+                    trial_cost = cost(trial)
+                    if trial_cost < best_move_cost - 1e-12:
+                        best_move = (group, destination)
+                        best_move_cost = trial_cost
+            if best_move is not None:
+                assignment[best_move[0]] = best_move[1]
+                improved = True
+
+        final_cost = cost(assignment)
+        if final_cost < best_cost:
+            best_cost = final_cost
+            best_assignment = dict(assignment)
+
+    assert best_assignment is not None
+    return best_assignment
+
+
 @dataclass(slots=True)
 class GroupSplitResult:
     train: list[GraphSample]
@@ -132,34 +280,35 @@ class GroupAwareSplitter:
                 "for train/validation/test splitting."
             )
 
-        ordered_groups = sorted(
-            groups.keys()
-        )
-
+        ordered_groups = sorted(groups)
         if shuffle_groups:
-            import random
-
-            rng = random.Random(seed)
-            rng.shuffle(ordered_groups)
-
-        train_count, validation_count = (
-            self._calculate_group_counts(
+            group_labels = {
+                group: [sample.behavior_id for sample in group_samples]
+                for group, group_samples in groups.items()
+            }
+            assignment = stratified_group_assignment(
+                group_labels,
+                (self.train_ratio, self.validation_ratio, self.test_ratio),
+                seed=seed,
+            )
+            train_groups = [
+                group for group in ordered_groups if assignment[group] == 0
+            ]
+            validation_groups = [
+                group for group in ordered_groups if assignment[group] == 1
+            ]
+            test_groups = [
+                group for group in ordered_groups if assignment[group] == 2
+            ]
+        else:
+            train_count, validation_count = self._calculate_group_counts(
                 len(ordered_groups)
             )
-        )
-
-        train_groups = ordered_groups[
-            :train_count
-        ]
-
-        validation_groups = ordered_groups[
-            train_count:
-            train_count + validation_count
-        ]
-
-        test_groups = ordered_groups[
-            train_count + validation_count:
-        ]
+            train_groups = ordered_groups[:train_count]
+            validation_groups = ordered_groups[
+                train_count:train_count + validation_count
+            ]
+            test_groups = ordered_groups[train_count + validation_count:]
 
         train_group_set = set(
             train_groups
