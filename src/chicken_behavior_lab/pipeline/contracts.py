@@ -9,6 +9,8 @@ from numbers import Integral, Real
 from types import MappingProxyType
 from typing import Mapping
 
+from chicken_behavior_lab.core.identifiers import normalize_track_id
+
 
 class ContractValidationError(ValueError):
     """Raised when a pipeline payload violates its data contract."""
@@ -21,11 +23,11 @@ def _validate_frame_index(value: int, field_name: str = "frame_index") -> None:
         )
 
 
-def _validate_track_id(value: int) -> None:
-    if isinstance(value, bool) or not isinstance(value, Integral) or value < 0:
-        raise ContractValidationError(
-            "track_id must be a non-negative integer."
-        )
+def _validate_track_id(value: str | int) -> str:
+    try:
+        return normalize_track_id(value)
+    except (TypeError, ValueError) as exc:
+        raise ContractValidationError(f"Invalid track_id: {exc}") from exc
 
 
 def _finite_number(value: Real, field_name: str) -> float:
@@ -113,11 +115,11 @@ class Detection:
 class TrackObservation:
     """A detection associated with a tracker-assigned track ID."""
 
-    track_id: int
+    track_id: str
     detection: Detection
 
     def __post_init__(self) -> None:
-        _validate_track_id(self.track_id)
+        object.__setattr__(self, "track_id", _validate_track_id(self.track_id))
 
         if not isinstance(self.detection, Detection):
             raise ContractValidationError(
@@ -159,12 +161,12 @@ class Keypoint:
 class PoseEstimate:
     """Named keypoints estimated for one tracked subject in one frame."""
 
-    track_id: int
+    track_id: str
     frame_index: int
     keypoints: Mapping[str, Keypoint]
 
     def __post_init__(self) -> None:
-        _validate_track_id(self.track_id)
+        object.__setattr__(self, "track_id", _validate_track_id(self.track_id))
         _validate_frame_index(self.frame_index)
 
         if not isinstance(self.keypoints, Mapping) or not self.keypoints:
@@ -202,13 +204,13 @@ class SkeletonFrame:
     downstream code should define whether its graph treats edges as directed.
     """
 
-    track_id: int
+    track_id: str
     frame_index: int
     nodes: Mapping[str, Keypoint]
     edges: tuple[tuple[str, str], ...]
 
     def __post_init__(self) -> None:
-        _validate_track_id(self.track_id)
+        object.__setattr__(self, "track_id", _validate_track_id(self.track_id))
         _validate_frame_index(self.frame_index)
 
         if not isinstance(self.nodes, Mapping) or not self.nodes:

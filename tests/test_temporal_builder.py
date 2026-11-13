@@ -121,10 +121,7 @@ def test_builder_does_not_cross_tracks() -> None:
     assert len(dataset) == 4
 
     for sample in dataset:
-        assert sample.track_id in {
-            1,
-            2,
-        }
+        assert sample.track_id in {"track_1", "track_2"}
 
 
 def test_builder_requires_contiguous_frames() -> None:
@@ -262,7 +259,7 @@ def test_builder_filter_by_track_group() -> None:
         TemporalSequenceBuilder.filter_by_groups(
             samples,
             {
-                "video_001::track::1"
+                "video_001::track::track_1"
             },
             split_group="track",
         )
@@ -272,6 +269,6 @@ def test_builder_filter_by_track_group() -> None:
 
     assert all(
         sample.get_metadata("track_id")
-        == 1
+        == "track_1"
         for sample in filtered
     )

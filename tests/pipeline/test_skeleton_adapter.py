@@ -60,7 +60,7 @@ class PoseToSkeletonAdapterTests(unittest.TestCase):
             make_pose()
         )
 
-        self.assertEqual(skeleton.track_id, 7)
+        self.assertEqual(skeleton.track_id, "track_7")
         self.assertEqual(skeleton.frame_index, 12)
 
     def test_preserves_invisible_keypoint(self):

@@ -5,6 +5,8 @@ Tests for ChickenBehaviorLab feature normalization.
 import numpy as np
 import pytest
 
+from chicken_behavior_lab.core.enums.keypoints import KeypointType
+
 from chicken_behavior_lab.features.motion import (
     MotionFeatureFrame,
 )
@@ -24,7 +26,7 @@ from chicken_behavior_lab.features.normalization import (
 
 def create_motion_frame(
     value: float,
-    num_keypoints: int = 3,
+    num_keypoints: int = len(KeypointType),
 ) -> MotionFeatureFrame:
     """
     Create a synthetic MotionFeatureFrame for testing.
@@ -74,7 +76,7 @@ def create_motion_frame(
 def create_sequence(
     value: float,
     temporal_length: int = 5,
-    num_keypoints: int = 3,
+    num_keypoints: int = len(KeypointType),
 ) -> TemporalFeatureSequence:
     """
     Create a synthetic temporal sequence.
@@ -103,6 +105,14 @@ def create_sequence(
         dtype=bool,
     )
 
+    if num_keypoints == len(KeypointType):
+        center = tuple(KeypointType).index(KeypointType.BODY_CENTER)
+        left = tuple(KeypointType).index(KeypointType.LEFT_HIP)
+        right = tuple(KeypointType).index(KeypointType.RIGHT_HIP)
+        features[:, center, :2] = (value, value)
+        features[:, left, :2] = (value - 1.0, value)
+        features[:, right, :2] = (value + 1.0, value)
+
     return TemporalFeatureSequence(
         features=features,
         frame_mask=frame_mask,
@@ -129,8 +139,8 @@ def test_normalizer_can_be_fitted():
     ]
 
     normalizer = MotionFeatureNormalizer(
-        reference_keypoint=0,
-        scale_keypoints=(0, 1),
+        reference_keypoint=KeypointType.BODY_CENTER,
+        scale_keypoints=(KeypointType.LEFT_HIP, KeypointType.RIGHT_HIP),
     )
 
     normalizer.fit(

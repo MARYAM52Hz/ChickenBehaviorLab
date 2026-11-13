@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from chicken_behavior_lab.models.skeleton import Skeleton
+from chicken_behavior_lab.core.identifiers import normalize_track_id
 
 
 @dataclass(slots=True)
@@ -39,6 +40,11 @@ class TrackedSkeleton:
         the same Track ID.
         """
 
+        self.track_id = normalize_track_id(self.track_id)
+        if self.skeleton.track_id is not None:
+            skeleton_track_id = normalize_track_id(self.skeleton.track_id)
+            if skeleton_track_id != self.track_id:
+                raise ValueError("TrackedSkeleton and Skeleton track IDs do not match.")
         self.skeleton.track_id = self.track_id
 
     # =====================================================

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import torch
 
+from torch_geometric.data import Batch, Data
+
 from chicken_behavior_lab.dataset.temporal_batch import (
     TemporalBatch,
 )
@@ -36,6 +38,17 @@ class DummyTemporalModel(torch.nn.Module):
 
 
 def make_batch() -> TemporalBatch:
+    edge_index = torch.tensor(
+        [[0, 1], [1, 2]],
+        dtype=torch.long,
+    )
+    frame_batches = [
+        Batch.from_data_list([
+            Data(x=torch.randn(13, 8), edge_index=edge_index),
+            Data(x=torch.randn(13, 8), edge_index=edge_index),
+        ])
+        for _ in range(4)
+    ]
     return TemporalBatch(
         x=torch.randn(
             2,
@@ -43,13 +56,7 @@ def make_batch() -> TemporalBatch:
             13,
             8,
         ),
-        edge_index=torch.tensor(
-            [
-                [0, 1],
-                [1, 2],
-            ],
-            dtype=torch.long,
-        ),
+        edge_index=edge_index,
         edge_attr=None,
         y=torch.tensor(
             [0, 1],
@@ -63,10 +70,7 @@ def make_batch() -> TemporalBatch:
             "video_001",
             "video_001",
         ],
-        track_id=torch.tensor(
-            [10, 10],
-            dtype=torch.long,
-        ),
+        track_id=["track_10", "track_10"],
         start_frame=torch.tensor(
             [100, 104],
             dtype=torch.long,
@@ -79,6 +83,10 @@ def make_batch() -> TemporalBatch:
             "feeding",
             "walking",
         ],
+        frame_batches=frame_batches,
+        frame_mask=torch.ones((2, 4), dtype=torch.bool),
+        node_mask=torch.ones((2, 4, 13), dtype=torch.bool),
+        edge_mask=torch.ones((2, 4, 2), dtype=torch.bool),
     )
 
 
@@ -118,7 +126,7 @@ def test_temporal_evaluator() -> None:
 
     assert first.sample_id == "sample_001"
     assert first.video_id == "video_001"
-    assert first.track_id == 10
+    assert first.track_id == "track_10"
     assert first.start_frame == 100
     assert first.end_frame == 103
 

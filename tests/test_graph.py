@@ -219,13 +219,11 @@ def test_temporal_graph_masks():
     )
 
     assert (
-        graph.frame_mask[0]
-        is False
+        not graph.frame_mask[0]
     )
 
     assert (
-        graph.node_mask[1, 2]
-        is False
+        not graph.node_mask[1, 2]
     )
 
 

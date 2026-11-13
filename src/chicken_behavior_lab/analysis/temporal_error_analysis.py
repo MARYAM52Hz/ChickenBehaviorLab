@@ -6,18 +6,23 @@ from typing import Any
 from chicken_behavior_lab.training.temporal_evaluator import (
     TemporalEvaluationResult,
 )
+from chicken_behavior_lab.core.identifiers import normalize_track_id
 
 
 @dataclass(slots=True)
 class TemporalPredictionError:
     sample_id: str
     video_id: str
-    track_id: int
+    track_id: str | None
     start_frame: int
     end_frame: int
     true_behavior: str
     predicted_behavior: str
     confidence: float
+
+    def __post_init__(self) -> None:
+        if self.track_id is not None:
+            self.track_id = normalize_track_id(self.track_id)
 
 
 class TemporalPredictionErrorAnalyzer:

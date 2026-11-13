@@ -1,352 +1,126 @@
-"""
-ChickenBehaviorLab Feature Store
-================================
-
-Storage and retrieval of temporal skeleton features.
-
-The initial implementation uses NumPy files (.npz).
-
-The design intentionally keeps storage separate from:
-
-- detection
-- tracking
-- pose estimation
-- graph construction
-- dataset construction
-"""
+"""Persist temporal skeleton features as compressed NumPy archives."""
 
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 import numpy as np
 
-from chicken_behavior_lab.features.temporal_features import (
-    TemporalFeatureSequence,
-)
+from chicken_behavior_lab.features.temporal_features import TemporalFeatureSequence
+from chicken_behavior_lab.core.identifiers import normalize_track_id
+
+
+_SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 
 class FeatureStore:
-    """
-    Store and retrieve TemporalFeatureSequence objects.
+    """Store one temporal feature sequence per video and tracked individual."""
 
-    Directory structure
-    -------------------
-
-    feature_root/
-        video_001/
-            track_1.npz
-            track_2.npz
-
-        video_002/
-            track_1.npz
-            track_5.npz
-    """
-
-    def __init__(
-        self,
-        root: str | Path,
-    ) -> None:
-
+    def __init__(self, root: str | Path) -> None:
         self.root = Path(root)
+        self.root.mkdir(parents=True, exist_ok=True)
 
-        self.root.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
+    @staticmethod
+    def _validate_identifier(value: str, name: str) -> str:
+        if not isinstance(value, str) or not _SAFE_ID.fullmatch(value) or value in {".", ".."}:
+            raise ValueError(f"{name} must be a safe non-empty identifier.")
+        return value
 
-    # =====================================================
-    # Path Handling
-    # =====================================================
+    @staticmethod
+    def _normalize_track_id(track_id: str | int) -> str:
+        return normalize_track_id(track_id)
 
-    def _get_path(
-        self,
-        video_id: str,
-        track_id: int,
-    ) -> Path:
-        """
-        Return the storage path for one track.
-        """
+    def _get_path(self, video_id: str, track_id: str | int) -> Path:
+        safe_video_id = self._validate_identifier(video_id, "video_id")
+        safe_track_id = self._normalize_track_id(track_id)
+        return self.root / safe_video_id / f"{safe_track_id}.npz"
 
-        if not video_id:
-            raise ValueError(
-                "video_id cannot be empty."
-            )
-
-        if track_id < 0:
-            raise ValueError(
-                "track_id cannot be negative."
-            )
-
-        video_dir = (
-            self.root / video_id
-        )
-
-        return (
-            video_dir
-            / f"track_{track_id}.npz"
-        )
-
-    # =====================================================
-    # Save
-    # =====================================================
+    @staticmethod
+    def _validate_sequence(sequence: TemporalFeatureSequence) -> None:
+        if not isinstance(sequence, TemporalFeatureSequence):
+            raise TypeError("sequence must be a TemporalFeatureSequence.")
+        if sequence.features.ndim != 3:
+            raise ValueError("sequence.features must have shape (T, V, F).")
+        temporal_length, num_keypoints, _ = sequence.features.shape
+        if sequence.frame_mask.shape != (temporal_length,):
+            raise ValueError("frame_mask must have shape (T,).")
+        if sequence.keypoint_mask.shape != (temporal_length, num_keypoints):
+            raise ValueError("keypoint_mask must have shape (T, V).")
+        if len(sequence.frame_ids) != temporal_length:
+            raise ValueError("frame_ids length must match the temporal dimension.")
 
     def save(
         self,
         video_id: str,
-        track_id: int,
+        track_id: str | int,
         sequence: TemporalFeatureSequence,
     ) -> Path:
-        """
-        Save a temporal feature sequence.
-
-        Parameters
-        ----------
-        video_id:
-            Source video identifier.
-
-        track_id:
-            Tracked chicken identifier.
-
-        sequence:
-            TemporalFeatureSequence to store.
-
-        Returns
-        -------
-        Path
-            Path of the saved feature file.
-        """
-
-        if not isinstance(
-            sequence,
-            TemporalFeatureSequence,
-        ):
-            raise TypeError(
-                "sequence must be a "
-                "TemporalFeatureSequence."
-            )
-
-        path = self._get_path(
-            video_id,
-            track_id,
-        )
-
-        path.parent.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
-
+        self._validate_sequence(sequence)
+        path = self._get_path(video_id, track_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
         np.savez_compressed(
             path,
             features=sequence.features,
             frame_mask=sequence.frame_mask,
             keypoint_mask=sequence.keypoint_mask,
-            frame_ids=np.asarray(
-                sequence.frame_ids
-            ),
+            frame_ids=np.asarray(sequence.frame_ids, dtype=str),
         )
-
         return path
-
-    # =====================================================
-    # Load
-    # =====================================================
 
     def load(
         self,
         video_id: str,
-        track_id: int,
-        start_frame: int | None = None,
-        end_frame: int | None = None,
+        track_id: str | int,
+        start_frame: str | int | None = None,
+        end_frame: str | int | None = None,
     ) -> TemporalFeatureSequence:
-        """
-        Load a temporal feature sequence.
-
-        Optionally returns only a frame interval.
-
-        Parameters
-        ----------
-        video_id:
-            Source video identifier.
-
-        track_id:
-            Tracked chicken identifier.
-
-        start_frame:
-            Optional first frame.
-
-        end_frame:
-            Optional last frame.
-
-        Returns
-        -------
-        TemporalFeatureSequence
-        """
-
-        path = self._get_path(
-            video_id,
-            track_id,
-        )
-
+        path = self._get_path(video_id, track_id)
         if not path.exists():
-            raise FileNotFoundError(
-                "Feature sequence not found: "
-                f"{path}"
+            raise FileNotFoundError(f"Feature sequence not found: {path}")
+
+        with np.load(path, allow_pickle=False) as data:
+            sequence = TemporalFeatureSequence(
+                features=data["features"],
+                frame_mask=data["frame_mask"],
+                keypoint_mask=data["keypoint_mask"],
+                frame_ids=tuple(str(item) for item in data["frame_ids"]),
             )
+        self._validate_sequence(sequence)
 
-        with np.load(
-            path,
-            allow_pickle=False,
-        ) as data:
-
-            features = data[
-                "features"
-            ]
-
-            frame_mask = data[
-                "frame_mask"
-            ]
-
-            keypoint_mask = data[
-                "keypoint_mask"
-            ]
-
-            frame_ids_array = data[
-                "frame_ids"
-            ]
-
-        frame_ids = tuple(
-            str(frame_id)
-            for frame_id in frame_ids_array
-        )
-
-        sequence = TemporalFeatureSequence(
-            features=features,
-            frame_mask=frame_mask,
-            keypoint_mask=keypoint_mask,
-            frame_ids=frame_ids,
-        )
-
-        if (
-            start_frame is None
-            and end_frame is None
-        ):
+        if start_frame is None and end_frame is None:
             return sequence
-
-        return self._slice_sequence(
-            sequence,
-            start_frame,
-            end_frame,
-        )
-
-    # =====================================================
-    # Slice
-    # =====================================================
+        return self._slice_sequence(sequence, start_frame, end_frame)
 
     @staticmethod
     def _slice_sequence(
         sequence: TemporalFeatureSequence,
-        start_frame: int | None,
-        end_frame: int | None,
+        start_frame: str | int | None,
+        end_frame: str | int | None,
     ) -> TemporalFeatureSequence:
-        """
-        Extract an inclusive temporal interval.
+        if start_frame is None or end_frame is None:
+            raise ValueError("Both start_frame and end_frame must be provided for slicing.")
 
-        Important:
-        start_frame and end_frame refer to the frame IDs,
-        not necessarily array indices.
-        """
-
-        if (
-            start_frame is None
-            or end_frame is None
-        ):
-            raise ValueError(
-                "Both start_frame and end_frame "
-                "must be provided for slicing."
-            )
-
-        if start_frame > end_frame:
-            raise ValueError(
-                "start_frame must be <= end_frame."
-            )
-
-        frame_ids = list(
-            sequence.frame_ids
-        )
-
+        frame_ids = list(sequence.frame_ids)
         try:
-            first_index = frame_ids.index(
-                str(start_frame)
-            )
-
-            last_index = frame_ids.index(
-                str(end_frame)
-            )
-
+            first_index = frame_ids.index(str(start_frame))
+            last_index = frame_ids.index(str(end_frame))
         except ValueError as exc:
-            raise ValueError(
-                "Requested frame range is not "
-                "available in the feature sequence."
-            ) from exc
-
+            raise ValueError("Requested frame range is not available in the feature sequence.") from exc
         if first_index > last_index:
-            raise ValueError(
-                "Invalid frame ordering."
-            )
+            raise ValueError("Invalid frame ordering.")
 
         return TemporalFeatureSequence(
-            features=sequence.features[
-                first_index:last_index + 1
-            ],
-            frame_mask=sequence.frame_mask[
-                first_index:last_index + 1
-            ],
-            keypoint_mask=sequence.keypoint_mask[
-                first_index:last_index + 1
-            ],
-            frame_ids=tuple(
-                frame_ids[
-                    first_index:last_index + 1
-                ]
-            ),
+            features=sequence.features[first_index:last_index + 1],
+            frame_mask=sequence.frame_mask[first_index:last_index + 1],
+            keypoint_mask=sequence.keypoint_mask[first_index:last_index + 1],
+            frame_ids=tuple(frame_ids[first_index:last_index + 1]),
         )
 
-    # =====================================================
-    # Exists
-    # =====================================================
+    def exists(self, video_id: str, track_id: str | int) -> bool:
+        return self._get_path(video_id, track_id).exists()
 
-    def exists(
-        self,
-        video_id: str,
-        track_id: int,
-    ) -> bool:
-        """
-        Check whether a feature sequence exists.
-        """
-
-        return self._get_path(
-            video_id,
-            track_id,
-        ).exists()
-
-    # =====================================================
-    # Delete
-    # =====================================================
-
-    def delete(
-        self,
-        video_id: str,
-        track_id: int,
-    ) -> None:
-        """
-        Delete a stored feature sequence.
-        """
-
-        path = self._get_path(
-            video_id,
-            track_id,
-        )
-
+    def delete(self, video_id: str, track_id: str | int) -> None:
+        path = self._get_path(video_id, track_id)
         if path.exists():
             path.unlink()

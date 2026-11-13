@@ -79,3 +79,23 @@ def test_temporal_graph_builder():
         graph.edge_features[0, 1],
         [1.0, 2.0],
     )
+
+
+def test_temporal_graph_builder_preserves_masks_and_zeros_invalid_edges():
+    features = np.ones((2, 3, 2), dtype=np.float32)
+    frame_mask = np.array([True, False], dtype=bool)
+    node_mask = np.ones((2, 3), dtype=bool)
+    node_mask[0, 1] = False
+    sequence = TemporalFeatureSequence(
+        features=features,
+        frame_mask=frame_mask,
+        keypoint_mask=node_mask,
+        frame_ids=("200", "201"),
+    )
+    edge_index = np.array([[0, 1], [1, 2]], dtype=np.int64)
+    graph = TemporalSkeletonGraphBuilder(edge_index).build(sequence)
+
+    assert np.array_equal(graph.frame_mask, frame_mask)
+    assert np.array_equal(graph.node_mask, node_mask)
+    assert np.allclose(graph.edge_features[0], 0.0)
+    assert np.allclose(graph.edge_features[1], 0.0)

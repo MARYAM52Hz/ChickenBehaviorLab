@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from chicken_behavior_lab.dataset.sample import GraphSample
+from chicken_behavior_lab.core.identifiers import normalize_track_id
 
 
 @dataclass(slots=True)
@@ -26,6 +27,12 @@ class TemporalGraphSample:
     behavior_id: str
     sample_id: str
     metadata: dict[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        if self.metadata is not None and isinstance(self.metadata, dict):
+            self.metadata = dict(self.metadata)
+            if self.metadata.get("track_id") is not None:
+                self.metadata["track_id"] = normalize_track_id(self.metadata["track_id"])
 
     def validate(self) -> None:
         if not self.graphs:
@@ -133,19 +140,10 @@ class TemporalGraphSample:
 
         if "track_id" in self.metadata:
             track_id = self.metadata["track_id"]
-
-            if not isinstance(
-                track_id,
-                int,
-            ):
-                raise TypeError(
-                    "metadata.track_id must be an integer."
-                )
-
-            if track_id < 0:
-                raise ValueError(
-                    "metadata.track_id cannot be negative."
-                )
+            if not isinstance(track_id, str) or not track_id:
+                raise ValueError("metadata.track_id must be a canonical non-empty string.")
+            if normalize_track_id(track_id) != track_id:
+                raise ValueError("metadata.track_id is not in canonical form.")
 
         if "start_frame" in self.metadata:
             start_frame = self.metadata[
@@ -219,14 +217,14 @@ class TemporalGraphSample:
         return str(value)
 
     @property
-    def track_id(self) -> int | None:
+    def track_id(self) -> str | None:
         if self.metadata is not None:
             value = self.metadata.get(
                 "track_id"
             )
 
             if value is not None:
-                return int(value)
+                return normalize_track_id(value)
 
         value = self.graphs[0].get_metadata(
             "track_id"
@@ -235,7 +233,7 @@ class TemporalGraphSample:
         if value is None:
             return None
 
-        return int(value)
+        return normalize_track_id(value)
 
     @property
     def first_frame(self) -> int:
@@ -278,6 +276,19 @@ class TemporalGraphSample:
     @property
     def sequence_length(self) -> int:
         return len(self.graphs)
+
+    @property
+    def samples(self) -> list[GraphSample]:
+        """Backward-compatible alias for the graph samples in this window."""
+        return self.graphs
+
+    @property
+    def start_frame(self) -> int:
+        return self.first_frame
+
+    @property
+    def end_frame(self) -> int:
+        return self.last_frame
 
     def get_metadata(
         self,

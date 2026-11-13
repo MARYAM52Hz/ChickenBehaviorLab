@@ -54,6 +54,7 @@ class CheckpointManager:
         best_metric: float | None = None,
         train_metrics: dict[str, Any] | None = None,
         val_metrics: dict[str, Any] | None = None,
+        training_config: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
         path: str | Path | None = None,
     ) -> Path:
@@ -81,6 +82,13 @@ class CheckpointManager:
                 if label_mapping is not None
                 else None
             ),
+            # Backward-compatible name retained for older experiment scripts.
+            "label_to_index": (
+                dict(label_mapping)
+                if label_mapping is not None
+                else None
+            ),
+            "training_config": dict(training_config or {}),
             "model_state_dict": model.state_dict(),
             "optimizer_state_dict": (
                 optimizer.state_dict()
@@ -251,6 +259,38 @@ class CheckpointManager:
             raise TypeError(
                 "Checkpoint epoch must be an integer."
             )
+
+
+def save_checkpoint(
+    *,
+    path: str | Path,
+    model: torch.nn.Module,
+    model_config: Any | None = None,
+    training_config: dict[str, Any] | None = None,
+    label_to_index: dict[str, int] | None = None,
+    optimizer: torch.optim.Optimizer | None = None,
+    scheduler: Any | None = None,
+    epoch: int = 0,
+    best_metric: float | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> Path:
+    """Save a checkpoint using the convenience API used by experiment scripts."""
+    target = Path(path)
+    manager = CheckpointManager(
+        directory=target.parent,
+        filename=target.name,
+    )
+    return manager.save(
+        model=model,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        epoch=epoch,
+        model_config=model_config,
+        label_mapping=label_to_index,
+        training_config=training_config,
+        best_metric=best_metric,
+        metadata=metadata,
+    )
 
 
 def load_checkpoint(

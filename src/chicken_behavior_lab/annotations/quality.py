@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping
 
 from .schema import AnnotationSet, BehaviorAnnotation
+from chicken_behavior_lab.core.identifiers import normalize_track_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,10 +109,11 @@ def analyze_annotation_quality(
             raise ValueError("video_length_frames must be greater than zero.")
 
     annotations = list(annotation_set.annotations)
-    by_track: dict[str | int, list[BehaviorAnnotation]] = {}
+    by_track: dict[str, list[BehaviorAnnotation]] = {}
     behavior_counts: dict[str, int] = {}
     for ann in annotations:
-        by_track.setdefault(ann.track_id, []).append(ann)
+        canonical_track_id = normalize_track_id(ann.track_id)
+        by_track.setdefault(canonical_track_id, []).append(ann)
         behavior_counts[ann.behavior_id] = behavior_counts.get(ann.behavior_id, 0) + 1
 
     issues: list[AnnotationIssue] = []
@@ -154,9 +156,10 @@ def analyze_annotation_quality(
 
     # Exact same track and interval but different labels, explicitly marked as
     # annotator disagreement only when at least two annotators are known.
-    interval_groups: dict[tuple[str | int, int, int], list[BehaviorAnnotation]] = {}
+    interval_groups: dict[tuple[str, int, int], list[BehaviorAnnotation]] = {}
     for ann in annotations:
-        interval_groups.setdefault((ann.track_id, ann.start_frame, ann.end_frame), []).append(ann)
+        canonical_track_id = normalize_track_id(ann.track_id)
+        interval_groups.setdefault((canonical_track_id, ann.start_frame, ann.end_frame), []).append(ann)
     for (track_id, start, end), items in interval_groups.items():
         annotators = {a.annotator_id for a in items if a.annotator_id}
         labels = {a.behavior_id for a in items}
@@ -174,9 +177,10 @@ def analyze_annotation_quality(
         tracks = set(by_track)
         if expected_track_ids is not None:
             for track_id in expected_track_ids:
-                if isinstance(track_id, bool) or not isinstance(track_id, (str, int)):
-                    raise TypeError("expected_track_ids must contain only string or integer IDs.")
-                tracks.add(track_id)
+                try:
+                    tracks.add(normalize_track_id(track_id))
+                except (TypeError, ValueError) as exc:
+                    raise TypeError("expected_track_ids must contain valid string or integer IDs.") from exc
         for track_id in sorted(tracks, key=lambda value: (type(value).__name__, str(value))):
             intervals = sorted(
                 (max(0, a.start_frame), min(video_length_frames - 1, a.end_frame))
@@ -192,7 +196,7 @@ def analyze_annotation_quality(
                 if end >= start:
                     covered += end - start + 1
                     cursor = end + 1
-            uncovered[str(track_id)] = max(0, video_length_frames - covered)
+            uncovered[track_id] = max(0, video_length_frames - covered)
             if not by_track.get(track_id):
                 issues.append(AnnotationIssue(
                     code="track_without_annotations",

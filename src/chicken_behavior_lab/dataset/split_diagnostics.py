@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Sequence
 
 from chicken_behavior_lab.dataset.sample import GraphSample
+from chicken_behavior_lab.core.identifiers import normalize_track_id
 
 
 @dataclass(slots=True)
@@ -17,6 +18,8 @@ class SplitDiagnosticsReport:
     sample_ratios: dict[str, float]
     group_counts: dict[str, int]
     class_counts: dict[str, dict[str, int]]
+    class_group_counts: dict[str, int]
+    class_split_coverage: dict[str, dict[str, bool]]
     group_overlaps: dict[str, list[str]]
     duplicate_sample_ids: list[str]
     train_classes: list[str]
@@ -56,6 +59,11 @@ class SplitDiagnosticsReport:
                 split: dict(sorted(counts.items()))
                 for split, counts in self.class_counts.items()
             },
+            "class_group_counts": dict(sorted(self.class_group_counts.items())),
+            "class_split_coverage": {
+                label: dict(coverage)
+                for label, coverage in sorted(self.class_split_coverage.items())
+            },
             "group_overlaps": {
                 name: list(groups)
                 for name, groups in self.group_overlaps.items()
@@ -88,10 +96,13 @@ def _group_id(sample: GraphSample, group_key: str) -> str:
 
         # Track identifiers may repeat across videos, so include video_id.
         video_id = metadata.get("video_id")
-        if video_id is not None and str(video_id).strip():
-            return f"{video_id}::track::{track_id}"
-
-        return str(track_id)
+        if video_id is None or not str(video_id).strip():
+            raise ValueError(
+                f"Sample {sample.sample_id!r} has no valid video_id "
+                "required for track-level split diagnostics."
+            )
+        canonical_track_id = normalize_track_id(track_id)
+        return f"{video_id}::track::{canonical_track_id}"
 
     raise ValueError("group_key must be either 'video_id' or 'track_id'.")
 
@@ -178,6 +189,19 @@ def inspect_split_quality(
         ))
         for split_name, samples in splits.items()
     }
+    class_groups: dict[str, set[str]] = {}
+    class_split_coverage: dict[str, dict[str, bool]] = {}
+    for split_name, samples in splits.items():
+        for sample in samples:
+            label = sample.behavior_id
+            class_groups.setdefault(label, set()).add(
+                _group_id(sample, group_key)
+            )
+    for label in sorted(class_groups):
+        class_split_coverage[label] = {
+            split_name: class_counts[split_name].get(label, 0) > 0
+            for split_name in splits
+        }
 
     train_classes = set(class_counts["train"])
     validation_classes = set(class_counts["validation"])
@@ -192,6 +216,10 @@ def inspect_split_quality(
             for split_name, split_groups in groups.items()
         },
         class_counts=class_counts,
+        class_group_counts={
+            label: len(group_ids) for label, group_ids in class_groups.items()
+        },
+        class_split_coverage=class_split_coverage,
         group_overlaps=group_overlaps,
         duplicate_sample_ids=duplicate_sample_ids,
         train_classes=sorted(train_classes),

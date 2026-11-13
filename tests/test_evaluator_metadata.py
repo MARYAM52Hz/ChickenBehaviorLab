@@ -16,7 +16,7 @@ def test_pyg_batch_preserves_sample_metadata():
 
     data_1.sample_id = "sample_001"
     data_1.video_id = "video_001"
-    data_1.track_id = 1
+    data_1.track_id = "track_1"
     data_1.start_frame = 100
     data_1.end_frame = 150
 
@@ -33,7 +33,7 @@ def test_pyg_batch_preserves_sample_metadata():
 
     data_2.sample_id = "sample_002"
     data_2.video_id = "video_002"
-    data_2.track_id = 2
+    data_2.track_id = "track_2"
     data_2.start_frame = 200
     data_2.end_frame = 250
 
@@ -51,10 +51,7 @@ def test_pyg_batch_preserves_sample_metadata():
         "video_002",
     ]
 
-    assert batch.track_id.tolist() == [
-        1,
-        2,
-    ]
+    assert batch.track_id == ["track_1", "track_2"]
 
     assert batch.start_frame.tolist() == [
         100,

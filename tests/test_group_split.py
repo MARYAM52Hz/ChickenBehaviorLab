@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from chicken_behavior_lab.dataset.group_split import (
     GroupAwareSplitter,
@@ -211,3 +212,98 @@ def test_track_split_uses_video_and_track() -> None:
     assert len(all_groups) == len(
         set(all_groups)
     )
+
+
+@pytest.mark.parametrize("video_id", [None, "", "   "])
+def test_track_split_rejects_missing_or_blank_video_id(video_id) -> None:
+    samples = [
+        make_sample(
+            sample_id=f"sample_{index}",
+            video_id=video_id,
+            track_id=index,
+        )
+        for index in range(3)
+    ]
+    splitter = GroupAwareSplitter(
+        train_ratio=0.34,
+        validation_ratio=0.33,
+        test_ratio=0.33,
+        group_key="track_id",
+    )
+
+    import pytest
+    with pytest.raises(ValueError, match="metadata.video_id"):
+        splitter.split(samples, seed=42)
+
+
+
+def test_train_validation_split_keeps_video_groups_together() -> None:
+    from chicken_behavior_lab.dataset.split import (
+        group_train_validation_split,
+    )
+
+    class SampleDataset:
+        def __init__(self, samples):
+            self.samples = list(samples)
+
+        def __len__(self):
+            return len(self.samples)
+
+        def __getitem__(self, index):
+            return self.samples[index]
+
+    samples = [
+        make_sample(
+            sample_id=f"video_{video_index}_track_{track_id}",
+            video_id=f"video_{video_index}",
+            track_id=track_id,
+        )
+        for video_index in range(8)
+        for track_id in range(2)
+    ]
+    dataset = SampleDataset(samples)
+
+    train, validation = group_train_validation_split(
+        dataset,
+        validation_fraction=0.25,
+        random_seed=19,
+        group_by="video",
+    )
+
+    train_groups = {
+        dataset.samples[index].metadata["video_id"]
+        for index in train.indices
+    }
+    validation_groups = {
+        dataset.samples[index].metadata["video_id"]
+        for index in validation.indices
+    }
+
+    assert train_groups.isdisjoint(validation_groups)
+    assert len(train) + len(validation) == len(dataset)
+    assert len(train_groups) == 6
+    assert len(validation_groups) == 2
+
+
+def test_train_validation_group_split_rejects_single_group() -> None:
+    from chicken_behavior_lab.dataset.split import (
+        group_train_validation_split,
+    )
+
+    class SampleDataset:
+        def __init__(self, samples):
+            self.samples = list(samples)
+
+        def __len__(self):
+            return len(self.samples)
+
+        def __getitem__(self, index):
+            return self.samples[index]
+
+    dataset = SampleDataset([
+        make_sample("sample_a", "same_video", 1),
+        make_sample("sample_b", "same_video", 2),
+    ])
+
+    with pytest.raises(ValueError, match="At least two distinct groups"):
+        group_train_validation_split(dataset, group_by="video")

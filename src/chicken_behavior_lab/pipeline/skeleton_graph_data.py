@@ -20,7 +20,7 @@ class SkeletonGraphData:
         This is a lightweight representation, not a PyG Data object.
     """
 
-    track_id: int
+    track_id: str
     frame_index: int
     node_names: tuple[str, ...]
     node_features: tuple[tuple[float, float, float, float], ...]

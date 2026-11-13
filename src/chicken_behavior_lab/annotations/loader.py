@@ -41,6 +41,8 @@ class AnnotationLoader:
     def load(self, path: str | Path) -> AnnotationSet:
         """Read a JSON annotation file and validate its structure and values."""
         source = Path(path).expanduser()
+        if source.suffix.lower() != ".json":
+            raise AnnotationLoadError(f"Only JSON annotation files are supported: {source}")
         if not source.exists():
             raise AnnotationLoadError(f"Annotation file does not exist: {source}")
         if not source.is_file():

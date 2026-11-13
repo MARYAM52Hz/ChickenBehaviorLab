@@ -182,3 +182,15 @@ def test_frame_ids_are_preserved():
         "frame_100",
         "frame_101",
     )
+
+
+def test_default_builder_preserves_the_complete_annotation_interval():
+    frames = [create_frame(float(index)) for index in range(73)]
+    sequence = TemporalFeatureBuilder().build(
+        frames,
+        frame_ids=[f"frame_{index}" for index in range(73)],
+    )
+    assert sequence.shape == (73, 2, 7)
+    assert sequence.frame_mask.all()
+    assert sequence.frame_ids[0] == "frame_0"
+    assert sequence.frame_ids[-1] == "frame_72"

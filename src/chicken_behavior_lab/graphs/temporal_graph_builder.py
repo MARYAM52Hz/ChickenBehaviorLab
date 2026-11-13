@@ -59,18 +59,25 @@ class TemporalSkeletonGraphBuilder:
             )
         )
 
-        edge_features = (
-            self.edge_feature_builder.build(
-                node_features,
-                self.edge_index,
-            )
+        edge_features = self.edge_feature_builder.build(
+            node_features,
+            self.edge_index,
         )
+        edge_valid = (
+            sequence.keypoint_mask[:, self.edge_index[0]]
+            & sequence.keypoint_mask[:, self.edge_index[1]]
+            & sequence.frame_mask[:, None]
+        )
+        edge_features[~edge_valid] = 0.0
 
         graph = TemporalSkeletonGraph(
             node_features=node_features,
             edge_index=self.edge_index,
             edge_features=edge_features,
             frame_ids=sequence.frame_ids,
+            frame_mask=sequence.frame_mask.copy(),
+            node_mask=sequence.keypoint_mask.copy(),
+            keypoint_types=sequence.keypoint_types,
         )
 
         graph.validate()

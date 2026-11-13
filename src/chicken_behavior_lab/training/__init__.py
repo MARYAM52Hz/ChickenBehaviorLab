@@ -1,53 +1,41 @@
-from chicken_behavior_lab.training.losses import (
-    ClassificationLoss,
-)
+"""Training utilities with lazy loading of PyTorch-dependent exports."""
 
-from chicken_behavior_lab.training.trainer import (
-    Trainer,
-)
+from __future__ import annotations
 
-from chicken_behavior_lab.training.trainer_factory import (
-    build_trainer,
-)
-
-from chicken_behavior_lab.training.checkpoint import (
-    CheckpointManager,
-    load_checkpoint,
-)
-
-from chicken_behavior_lab.training.evaluator import (
-    Evaluator,
-    EvaluationResult,
-    RawPredictionRecord,
-)
-
-from chicken_behavior_lab.training.experiment_results import (
-    ExperimentResultManager,
-)
-
-from chicken_behavior_lab.training.temporal_evaluator import (
-    TemporalEvaluator,
-    TemporalEvaluationResult,
-    TemporalPredictionRecord,
-)
+from importlib import import_module
 
 
-__all__ = [
-    "ClassificationLoss",
+_EXPORTS = {
+    "ClassificationLoss": (".losses", "ClassificationLoss"),
+    "ClassificationMetrics": (".metrics", "ClassificationMetrics"),
+    "compute_classification_metrics": (".metrics", "compute_classification_metrics"),
+    "build_confusion_matrix": (".metrics", "build_confusion_matrix"),
+    "format_classification_report": (".metrics", "format_classification_report"),
+    "Trainer": (".trainer", "Trainer"),
+    "TrainingConfig": (".config", "TrainingConfig"),
+    "build_trainer": (".trainer_factory", "build_trainer"),
+    "CheckpointManager": (".checkpoint", "CheckpointManager"),
+    "load_checkpoint": (".checkpoint", "load_checkpoint"),
+    "Evaluator": (".evaluator", "Evaluator"),
+    "EvaluationResult": (".evaluator", "EvaluationResult"),
+    "RawPredictionRecord": (".evaluator", "RawPredictionRecord"),
+    "ExperimentResultManager": (".experiment_results", "ExperimentResultManager"),
+    "TemporalEvaluator": (".temporal_evaluator", "TemporalEvaluator"),
+    "TemporalEvaluationResult": (".temporal_evaluator", "TemporalEvaluationResult"),
+    "TemporalPredictionRecord": (".temporal_evaluator", "TemporalPredictionRecord"),
+}
 
-    "Trainer",
-    "build_trainer",
+__all__ = list(_EXPORTS)
 
-    "CheckpointManager",
-    "load_checkpoint",
 
-    "Evaluator",
-    "EvaluationResult",
-    "RawPredictionRecord",
+def __getattr__(name: str):
+    """Load a public training symbol only when requested by a caller."""
+    try:
+        module_name, attribute_name = _EXPORTS[name]
+    except KeyError as exc:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from exc
 
-    "ExperimentResultManager",
-
-    "TemporalEvaluator",
-    "TemporalEvaluationResult",
-    "TemporalPredictionRecord",
-]
+    module = import_module(module_name, __name__)
+    value = getattr(module, attribute_name)
+    globals()[name] = value
+    return value

@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from chicken_behavior_lab.models.keypoint import (
     Keypoint,
 )
+from chicken_behavior_lab.core.identifiers import normalize_track_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +56,10 @@ class Skeleton:
     metadata: dict = field(
         default_factory=dict
     )
+
+    def __post_init__(self) -> None:
+        if self.track_id is not None:
+            self.track_id = normalize_track_id(self.track_id)
 
     # =====================================================
     # Keypoint Access

@@ -71,7 +71,7 @@ class SkeletonGraphEncoderTests(unittest.TestCase):
 
         encoded = SkeletonGraphEncoder(schema).encode(skeleton)
 
-        self.assertEqual(encoded.track_id, 4)
+        self.assertEqual(encoded.track_id, "track_4")
         self.assertEqual(encoded.frame_index, 20)
 
     def test_invisible_keypoint_keeps_visibility_mask(self):

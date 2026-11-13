@@ -103,6 +103,7 @@ def test_error_and_correct_counts():
     )
 
     assert len(analyzer) == 4
+    assert analyzer.records[0].track_id == "track_1"
     assert len(analyzer.errors) == 2
     assert len(analyzer.correct) == 2
 
@@ -199,4 +200,5 @@ def test_save_and_load_json(tmp_path):
     )
 
     assert len(loaded) == 4
+    assert loaded.records[0].track_id == "track_1"
     assert len(loaded.errors) == 2

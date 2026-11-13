@@ -14,6 +14,7 @@ from chicken_behavior_lab.dataset.temporal_dataset import (
 from chicken_behavior_lab.dataset.temporal_sample import (
     TemporalGraphSample,
 )
+from chicken_behavior_lab.core.identifiers import normalize_track_id
 
 
 class TemporalSequenceBuilder:
@@ -42,6 +43,7 @@ class TemporalSequenceBuilder:
         sequence_length: int,
         sequence_stride: int = 1,
         require_contiguous_frames: bool = True,
+        require_same_behavior: bool = False,
     ) -> None:
 
         if sequence_length < 1:
@@ -62,9 +64,13 @@ class TemporalSequenceBuilder:
             sequence_stride
         )
 
-        self.require_contiguous_frames = (
-            require_contiguous_frames
-        )
+        if not isinstance(require_contiguous_frames, bool):
+            raise TypeError("require_contiguous_frames must be a bool.")
+        if not isinstance(require_same_behavior, bool):
+            raise TypeError("require_same_behavior must be a bool.")
+
+        self.require_contiguous_frames = require_contiguous_frames
+        self.require_same_behavior = require_same_behavior
 
     def build(
         self,
@@ -120,18 +126,13 @@ class TemporalSequenceBuilder:
                     )
                 )
 
-        if not temporal_samples:
-            raise ValueError(
-                "No temporal windows could be created. "
-                "Check sequence_length and input samples."
-            )
-
+        # An empty result is meaningful when all candidate windows are
+        # rejected by contiguity/behavior rules. Callers that require data
+        # (such as TemporalExperiment) perform an explicit non-empty check.
         temporal_samples.sort(
             key=lambda sample: (
                 sample.video_id or "",
-                sample.track_id
-                if sample.track_id is not None
-                else -1,
+                sample.track_id or "",
                 sample.first_frame,
             )
         )
@@ -144,12 +145,12 @@ class TemporalSequenceBuilder:
         self,
         samples: Sequence[GraphSample],
     ) -> dict[
-        tuple[str, int],
+        tuple[str, str],
         list[GraphSample],
     ]:
 
         groups: dict[
-            tuple[str, int],
+            tuple[str, str],
             list[GraphSample],
         ] = defaultdict(list)
 
@@ -180,9 +181,7 @@ class TemporalSequenceBuilder:
                 video_id
             )
 
-            track_id = int(
-                track_id
-            )
+            track_id = normalize_track_id(track_id)
 
             groups[
                 (
@@ -248,15 +247,16 @@ class TemporalSequenceBuilder:
                 len(window)
                 == self.sequence_length
             ):
-                if (
+                is_contiguous = (
                     not self.require_contiguous_frames
-                    or self._is_contiguous(
-                        window
-                    )
-                ):
-                    windows.append(
-                        list(window)
-                    )
+                    or self._is_contiguous(window)
+                )
+                is_single_behavior = (
+                    not self.require_same_behavior
+                    or len({sample.behavior_id for sample in window}) == 1
+                )
+                if is_contiguous and is_single_behavior:
+                    windows.append(list(window))
 
             start_index += (
                 self.sequence_stride
@@ -317,7 +317,7 @@ class TemporalSequenceBuilder:
         *,
         window: Sequence[GraphSample],
         video_id: str,
-        track_id: int,
+        track_id: str,
         window_index: int,
     ) -> TemporalGraphSample:
 
@@ -356,7 +356,7 @@ class TemporalSequenceBuilder:
 
         sample_id = (
             f"{video_id}"
-            f"__track_{track_id}"
+            f"__{track_id}"
             f"__frames_{start_frame}_{end_frame}"
             f"__window_{window_index:06d}"
         )
@@ -498,7 +498,7 @@ class TemporalSequenceBuilder:
             else:
                 group = (
                     f"{video_id}"
-                    f"::track::{int(track_id)}"
+                    f"::track::{normalize_track_id(track_id)}"
                 )
 
             if group in allowed_groups:
@@ -507,3 +507,7 @@ class TemporalSequenceBuilder:
                 )
 
         return result
+
+
+# Backward-compatible name used by the temporal split helper.
+TemporalWindow = TemporalGraphSample

@@ -6,6 +6,7 @@ from typing import Any
 import numpy as np
 
 from chicken_behavior_lab.graph.graph import TemporalSkeletonGraph
+from chicken_behavior_lab.core.identifiers import normalize_track_id
 
 
 @dataclass(slots=True)
@@ -26,6 +27,12 @@ class GraphSample:
     behavior_id: str
     sample_id: str
     metadata: dict[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        if self.metadata is not None and isinstance(self.metadata, dict):
+            self.metadata = dict(self.metadata)
+            if self.metadata.get("track_id") is not None:
+                self.metadata["track_id"] = normalize_track_id(self.metadata["track_id"])
 
     def validate(self) -> None:
         self.graph.validate()
@@ -59,19 +66,10 @@ class GraphSample:
 
         if "track_id" in self.metadata:
             track_id = self.metadata["track_id"]
-
-            if not isinstance(
-                track_id,
-                (int, np.integer),
-            ):
-                raise TypeError(
-                    "metadata.track_id must be an integer."
-                )
-
-            if track_id < 0:
-                raise ValueError(
-                    "metadata.track_id cannot be negative."
-                )
+            if not isinstance(track_id, str) or not track_id:
+                raise ValueError("metadata.track_id must be a canonical non-empty string.")
+            if normalize_track_id(track_id) != track_id:
+                raise ValueError("metadata.track_id is not in canonical form.")
 
         if "start_frame" in self.metadata:
             start_frame = self.metadata["start_frame"]

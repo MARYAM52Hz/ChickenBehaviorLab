@@ -12,8 +12,10 @@ from torch_geometric.loader import (
 
 from chicken_behavior_lab.dataset import (
     DatasetFactory,
-    PyGGraphDataset,
-    train_validation_split,
+    FrameGraphDataset,
+)
+from chicken_behavior_lab.dataset.split import (
+    group_train_validation_split,
 )
 
 from chicken_behavior_lab.models import (
@@ -26,7 +28,7 @@ from chicken_behavior_lab.training import (
 )
 
 
-def parse_args():
+def parse_args(argv=None):
 
     parser = argparse.ArgumentParser(
         description=(
@@ -71,6 +73,13 @@ def parse_args():
     )
 
     parser.add_argument(
+        "--split-group",
+        choices=("video", "track"),
+        default="video",
+        help="Group identity used to keep related samples in one split.",
+    )
+
+    parser.add_argument(
         "--checkpoint",
         type=str,
         default=(
@@ -79,7 +88,7 @@ def parse_args():
         ),
     )
 
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def set_seed(
@@ -123,9 +132,9 @@ def choose_device():
     )
 
 
-def main():
+def main(argv=None):
 
-    args = parse_args()
+    args = parse_args(argv)
 
     config = TrainingConfig(
         epochs=args.epochs,
@@ -136,6 +145,7 @@ def main():
         validation_fraction=(
             args.validation_fraction
         ),
+        split_group=args.split_group,
         checkpoint_path=(
             args.checkpoint
         ),
@@ -175,12 +185,12 @@ def main():
             "required for training."
         )
 
-    dataset = PyGGraphDataset(
+    dataset = FrameGraphDataset(
         samples
     )
 
     print(
-        f"Classes: {dataset.labels}"
+        f"Classes: {list(dataset.label_to_index)}"
     )
 
     # =====================================================
@@ -188,16 +198,43 @@ def main():
     # =====================================================
 
     train_dataset, validation_dataset = (
-        train_validation_split(
+        group_train_validation_split(
             dataset,
-            validation_fraction=(
-                config.validation_fraction
-            ),
-            random_seed=(
-                config.random_seed
-            ),
+            validation_fraction=config.validation_fraction,
+            random_seed=config.random_seed,
+            group_by=config.split_group,
         )
     )
+
+    # A validation class absent from training cannot be meaningfully
+    # evaluated by this classifier. Fail clearly rather than reporting
+    # a misleading validation score; stratified group assignment is a
+    # separate follow-up improvement.
+    train_indices = set(train_dataset.indices)
+    validation_indices = set(validation_dataset.indices)
+    train_labels = {
+        dataset.samples[index].label
+        for index in train_indices
+    }
+    validation_labels = {
+        dataset.samples[index].label
+        for index in validation_indices
+    }
+    unseen_validation_labels = validation_labels - train_labels
+    if unseen_validation_labels:
+        label_names = {
+            index: label
+            for label, index in dataset.label_to_index.items()
+        }
+        unseen_names = sorted(
+            label_names.get(index, str(index))
+            for index in unseen_validation_labels
+        )
+        raise ValueError(
+            "Validation split contains behavior classes absent from "
+            f"training: {unseen_names}. Try another random seed, collect "
+            "more groups, or use a future stratified group split."
+        )
 
     print(
         f"Training samples: "
@@ -233,17 +270,21 @@ def main():
 
     first_sample = dataset[0]
 
-    node_feature_dim = (
-        first_sample.x.shape[1]
-    )
+    if first_sample.x.ndim != 2:
+        raise ValueError(
+            "The frame-level GNN expects node features shaped (N, F); "
+            f"received {tuple(first_sample.x.shape)}."
+        )
 
-    edge_feature_dim = (
-        first_sample.edge_attr.shape[1]
-    )
+    edge_attr = getattr(first_sample, "edge_attr", None)
+    if edge_attr is None:
+        raise ValueError(
+            "The frame-level GNN requires edge features in every sample."
+        )
 
-    num_classes = len(
-        dataset.labels
-    )
+    node_feature_dim = first_sample.x.shape[1]
+    edge_feature_dim = edge_attr.shape[1]
+    num_classes = len(dataset.label_to_index)
 
     print(
         f"Node feature dim: "
@@ -304,25 +345,28 @@ def main():
     trainer = Trainer(
         model=model,
         optimizer=optimizer,
-        loss_fn=loss_fn,
-        num_classes=num_classes,
+        criterion=loss_fn,
         device=device,
-        checkpoint_path=(
-            config.checkpoint_path
-        ),
+        checkpoint_path=config.checkpoint_path,
+        label_mapping=dataset.label_to_index,
+        training_config=config.to_dict(),
     )
 
     # =====================================================
     # Training
     # =====================================================
 
-    history = trainer.fit(
+    trainer.fit(
         train_loader=train_loader,
-        validation_loader=(
-            validation_loader
-        ),
+        validation_loader=validation_loader,
         epochs=config.epochs,
     )
+
+    if trainer.best_epoch is None or trainer.best_metric is None:
+        raise RuntimeError(
+            "Training finished without producing a valid best validation "
+            "checkpoint metric."
+        )
 
     # =====================================================
     # Summary
@@ -343,13 +387,11 @@ def main():
     )
 
     print(
-        f"Best epoch: "
-        f"{history.best_epoch}"
+        f"Best epoch: {trainer.best_epoch}"
     )
 
     print(
-        f"Best validation Macro-F1: "
-        f"{history.best_validation_f1:.4f}"
+        f"Best validation accuracy: {trainer.best_metric:.4f}"
     )
 
     print(

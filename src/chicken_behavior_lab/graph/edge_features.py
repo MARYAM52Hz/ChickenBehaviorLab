@@ -121,27 +121,13 @@ class EdgeFeatureExtractor:
         # Source coordinates
         # -------------------------------------------------
 
-        source_xy = node_features[
-            :,
-            source_indices,
-            [
-                self.x_index,
-                self.y_index,
-            ],
-        ]
+        source_xy = node_features[:, source_indices][:, :, [self.x_index, self.y_index]]
 
         # -------------------------------------------------
         # Target coordinates
         # -------------------------------------------------
 
-        target_xy = node_features[
-            :,
-            target_indices,
-            [
-                self.x_index,
-                self.y_index,
-            ],
-        ]
+        target_xy = node_features[:, target_indices][:, :, [self.x_index, self.y_index]]
 
         # -------------------------------------------------
         # Relative displacement

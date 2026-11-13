@@ -107,7 +107,7 @@ def test_group_from_sample_track() -> None:
         split_group="track",
     )
 
-    assert group == "video_001::track::7"
+    assert group == "video_001::track::track_7"
 
 
 def test_invalid_split_group() -> None:

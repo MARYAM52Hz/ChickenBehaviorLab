@@ -143,13 +143,31 @@ The list will expand over time.
 
 # Dataset Split
 
-The framework supports:
+The framework supports training, validation, and testing splits. For behavior
+learning, related samples must remain in the same split:
 
-- Training
-- Validation
-- Testing
+- Video-level splitting is the default and keeps all samples from one source
+  video together.
+- Track-level splitting is optional and uses the pair (video_id, track_id),
+  because track IDs may restart in each video.
+- A sample-level random split is only suitable when samples are genuinely
+  independent and do not share source videos or tracks.
 
-The splitting strategy depends on the experimental protocol.
+The baseline scripts/train.py uses a group-aware train/validation split.
+The validation fraction is applied to the number of groups, not the number of
+samples. If a behavior class appears in validation but not in training, the
+script stops with an explicit error rather than reporting an invalid score.
+Stratified group assignment is not implemented yet; rare classes may require
+a different seed or additional source groups.
+
+## Graph dataset adapters
+
+PyGGraphDataset preserves the temporal dimension of graph samples and is
+kept for existing temporal consumers. FrameGraphDataset is a separate
+adapter for the spatial ChickenBehaviorGNN baseline: it accepts exactly one
+frame per sample and exposes node and edge features without the singleton
+temporal dimension. Multi-frame samples must use the temporal pipeline rather
+than being silently reduced to one frame.
 
 ---
 

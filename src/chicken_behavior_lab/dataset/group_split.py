@@ -4,9 +4,164 @@ from dataclasses import dataclass
 from typing import Literal, Sequence
 
 from chicken_behavior_lab.dataset.sample import GraphSample
+from chicken_behavior_lab.core.identifiers import normalize_track_id
 
 
 GroupKey = Literal["video_id", "track_id"]
+
+
+def stratified_group_assignment(
+    group_labels: dict[str, Sequence[str]],
+    ratios: Sequence[float],
+    *,
+    seed: int = 42,
+    n_restarts: int = 64,
+) -> dict[str, int]:
+    """Assign whole groups to splits while approximately balancing classes."""
+    import random
+    from collections import Counter
+
+    if not group_labels:
+        raise ValueError("Cannot stratify an empty group mapping.")
+    if len(ratios) < 2 or any(
+        isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0
+        for value in ratios
+    ):
+        raise ValueError("At least two positive split ratios are required.")
+    if abs(sum(ratios) - 1.0) > 1e-8:
+        raise ValueError("Split ratios must sum to 1.0.")
+    if len(group_labels) < len(ratios):
+        raise ValueError(
+            f"At least {len(ratios)} distinct groups are required for "
+            f"{len(ratios)}-way splitting."
+        )
+    if n_restarts < 1:
+        raise ValueError("n_restarts must be at least 1.")
+
+    groups = sorted(group_labels)
+    labels_by_group = {
+        group: tuple(str(label) for label in group_labels[group])
+        for group in groups
+    }
+    if any(not labels for labels in labels_by_group.values()):
+        raise ValueError("Every group must contain at least one labeled sample.")
+
+    total_classes = Counter(
+        label for labels in labels_by_group.values() for label in labels
+    )
+    class_group_counts = Counter(
+        label for labels in labels_by_group.values() for label in set(labels)
+    )
+    total_samples = sum(len(labels) for labels in labels_by_group.values())
+    n_splits = len(ratios)
+
+    def cost(assignment: dict[str, int]) -> float:
+        split_class_counts = [Counter() for _ in ratios]
+        split_group_counts = [0 for _ in ratios]
+        split_sample_counts = [0 for _ in ratios]
+        split_class_groups = [Counter() for _ in ratios]
+        for group, split_index in assignment.items():
+            labels = labels_by_group[group]
+            split_group_counts[split_index] += 1
+            split_sample_counts[split_index] += len(labels)
+            split_class_counts[split_index].update(labels)
+            split_class_groups[split_index].update(set(labels))
+
+        score = 0.0
+        for index, ratio in enumerate(ratios):
+            if split_group_counts[index] == 0:
+                score += 100.0
+            group_error = (
+                split_group_counts[index] - len(groups) * ratio
+            ) / max(len(groups), 1)
+            sample_error = (
+                split_sample_counts[index] - total_samples * ratio
+            ) / max(total_samples, 1)
+            score += 0.35 * group_error**2 + 0.65 * sample_error**2
+
+        for label, total_count in total_classes.items():
+            for index, ratio in enumerate(ratios):
+                target = total_count * ratio
+                error = (
+                    split_class_counts[index][label] - target
+                ) / max(total_count, 1)
+                score += 1.5 * error**2
+
+            if split_class_counts[0][label] == 0:
+                score += 8.0
+            required_coverage = min(n_splits, class_group_counts[label])
+            actual_coverage = sum(
+                split_class_groups[index][label] > 0
+                for index in range(n_splits)
+            )
+            score += 1.25 * max(0, required_coverage - actual_coverage)
+
+        return score
+
+    best_assignment: dict[str, int] | None = None
+    best_cost = float("inf")
+    base_rng = random.Random(seed)
+    rarity = {
+        group: sum(
+            1.0 / class_group_counts[label]
+            for label in set(labels_by_group[group])
+        )
+        for group in groups
+    }
+
+    for _ in range(n_restarts):
+        rng = random.Random(base_rng.randrange(0, 2**32))
+        ordered = sorted(
+            groups,
+            key=lambda group: (
+                -rarity[group],
+                -len(labels_by_group[group]),
+                rng.random(),
+            ),
+        )
+        assignment: dict[str, int] = {}
+        for group in ordered:
+            candidate_costs = []
+            for split_index in range(n_splits):
+                trial = dict(assignment)
+                trial[group] = split_index
+                candidate_costs.append((cost(trial), rng.random(), split_index))
+            assignment[group] = min(candidate_costs)[2]
+
+        # Exhaustive single-group relocation is useful for small datasets,
+        # but its repeated full-cost evaluation scales cubically. For larger
+        # collections, rely on independent greedy restarts instead.
+        if len(groups) <= 32:
+            improved = True
+            while improved:
+                improved = False
+                current_cost = cost(assignment)
+                best_move = None
+                best_move_cost = current_cost
+                for group in groups:
+                    source = assignment[group]
+                    if sum(value == source for value in assignment.values()) <= 1:
+                        continue
+                    for destination in range(n_splits):
+                        if destination == source:
+                            continue
+                        trial = dict(assignment)
+                        trial[group] = destination
+                        trial_cost = cost(trial)
+                        if trial_cost < best_move_cost - 1e-12:
+                            best_move = (group, destination)
+                            best_move_cost = trial_cost
+                if best_move is not None:
+                    assignment[best_move[0]] = best_move[1]
+                    improved = True
+
+        final_cost = cost(assignment)
+        if final_cost < best_cost:
+            best_cost = final_cost
+            best_assignment = dict(assignment)
+
+    assert best_assignment is not None
+    return best_assignment
 
 
 @dataclass(slots=True)
@@ -131,34 +286,35 @@ class GroupAwareSplitter:
                 "for train/validation/test splitting."
             )
 
-        ordered_groups = sorted(
-            groups.keys()
-        )
-
+        ordered_groups = sorted(groups)
         if shuffle_groups:
-            import random
-
-            rng = random.Random(seed)
-            rng.shuffle(ordered_groups)
-
-        train_count, validation_count = (
-            self._calculate_group_counts(
+            group_labels = {
+                group: [sample.behavior_id for sample in group_samples]
+                for group, group_samples in groups.items()
+            }
+            assignment = stratified_group_assignment(
+                group_labels,
+                (self.train_ratio, self.validation_ratio, self.test_ratio),
+                seed=seed,
+            )
+            train_groups = [
+                group for group in ordered_groups if assignment[group] == 0
+            ]
+            validation_groups = [
+                group for group in ordered_groups if assignment[group] == 1
+            ]
+            test_groups = [
+                group for group in ordered_groups if assignment[group] == 2
+            ]
+        else:
+            train_count, validation_count = self._calculate_group_counts(
                 len(ordered_groups)
             )
-        )
-
-        train_groups = ordered_groups[
-            :train_count
-        ]
-
-        validation_groups = ordered_groups[
-            train_count:
-            train_count + validation_count
-        ]
-
-        test_groups = ordered_groups[
-            train_count + validation_count:
-        ]
+            train_groups = ordered_groups[:train_count]
+            validation_groups = ordered_groups[
+                train_count:train_count + validation_count
+            ]
+            test_groups = ordered_groups[train_count + validation_count:]
 
         train_group_set = set(
             train_groups
@@ -262,14 +418,14 @@ class GroupAwareSplitter:
                 "video_id"
             )
 
-            if not video_id:
+            if video_id is None or not str(video_id).strip():
                 raise ValueError(
                     "Cannot perform video-level split because "
                     f"sample '{sample.sample_id}' has no "
-                    "metadata.video_id."
+                    "usable metadata.video_id."
                 )
 
-            return str(video_id)
+            return str(video_id).strip()
 
         if self.group_key == "track_id":
 
@@ -287,13 +443,16 @@ class GroupAwareSplitter:
             video_id = metadata.get(
                 "video_id"
             )
-
-            if video_id:
-                return (
-                    f"{video_id}::track::{track_id}"
+            if video_id is None or not str(video_id).strip():
+                raise ValueError(
+                    "Cannot perform track-level split because "
+                    f"sample '{sample.sample_id}' has no "
+                    "usable metadata.video_id."
                 )
 
-            return f"track::{track_id}"
+            canonical_video_id = str(video_id).strip()
+            canonical_track_id = normalize_track_id(track_id)
+            return f"{canonical_video_id}::track::{canonical_track_id}"
 
         raise ValueError(
             f"Unsupported group_key: {self.group_key}"
@@ -374,3 +533,113 @@ class GroupAwareSplitter:
             raise ValueError(
                 "Test split is empty."
             )
+
+
+@dataclass(slots=True, frozen=True)
+class SplitGroups:
+    """Disjoint train, validation, and test group identifiers."""
+
+    train: tuple[str, ...]
+    validation: tuple[str, ...]
+    test: tuple[str, ...]
+
+    def validate(self) -> None:
+        train = set(self.train)
+        validation = set(self.validation)
+        test = set(self.test)
+        if train & validation or train & test or validation & test:
+            raise ValueError("Group splits must be disjoint.")
+        if not train or not validation or not test:
+            raise ValueError("Train, validation, and test groups must all be non-empty.")
+
+
+def build_group_id(sample, group_by: str = "video") -> str:
+    """Build a stable split identity from a sample's metadata.
+
+    Track IDs are qualified by video ID because tracker counters are commonly
+    reset for each video; track_1 in two videos denotes two individuals.
+    """
+    metadata = getattr(sample, "metadata", None) or {}
+    if group_by in {"video", "video_id"}:
+        video_id = metadata.get("video_id")
+        if video_id is None or not str(video_id).strip():
+            raise ValueError(f"Sample {getattr(sample, 'sample_id', '<unknown>')!r} has no video_id.")
+        return str(video_id)
+
+    if group_by in {"track", "track_id"}:
+        video_id = metadata.get("video_id")
+        track_id = metadata.get("track_id")
+        if video_id is None or not str(video_id).strip():
+            raise ValueError("Track-level splitting requires metadata.video_id.")
+        if track_id is None:
+            raise ValueError("Track-level splitting requires metadata.track_id.")
+        canonical_video_id = str(video_id).strip()
+        return f"{canonical_video_id}::track::{normalize_track_id(track_id)}"
+
+    raise ValueError("group_by must be 'video'/'video_id' or 'track'/'track_id'.")
+
+
+def split_group_ids(
+    groups: Sequence[str],
+    *,
+    train_ratio: float = 0.70,
+    validation_ratio: float = 0.15,
+    test_ratio: float = 0.15,
+    seed: int = 42,
+    group_labels: dict[str, Sequence[str]] | None = None,
+) -> SplitGroups:
+    """Divide unique group IDs, optionally balancing behavior labels.
+
+    Without group_labels this retains the legacy seeded random split.
+    When labels are supplied, each group remains indivisible and the shared
+    stratified assignment routine is used.
+    """
+    ratios = (train_ratio, validation_ratio, test_ratio)
+    if any(isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0 for value in ratios):
+        raise ValueError("All split ratios must be positive numbers.")
+    if abs(sum(ratios) - 1.0) > 1e-8:
+        raise ValueError("train_ratio + validation_ratio + test_ratio must equal 1.0.")
+
+    unique = sorted({str(group) for group in groups})
+    if len(unique) < 3:
+        raise ValueError("At least three distinct groups are required for splitting.")
+
+    if group_labels is not None:
+        normalized_labels = {
+            str(group): labels for group, labels in group_labels.items()
+        }
+        if set(normalized_labels) != set(unique):
+            raise ValueError(
+                "group_labels must contain exactly one entry for every input group."
+            )
+        assignment = stratified_group_assignment(
+            normalized_labels,
+            ratios,
+            seed=seed,
+        )
+        result = SplitGroups(
+            train=tuple(sorted(group for group, split_index in assignment.items() if split_index == 0)),
+            validation=tuple(sorted(group for group, split_index in assignment.items() if split_index == 1)),
+            test=tuple(sorted(group for group, split_index in assignment.items() if split_index == 2)),
+        )
+        result.validate()
+        return result
+
+    import random
+
+    shuffled = list(unique)
+    random.Random(seed).shuffle(shuffled)
+    n_groups = len(shuffled)
+    n_train = max(1, int(n_groups * train_ratio))
+    n_validation = max(1, int(n_groups * validation_ratio))
+    if n_train + n_validation >= n_groups:
+        n_train = n_groups - 2
+        n_validation = 1
+
+    result = SplitGroups(
+        train=tuple(sorted(shuffled[:n_train])),
+        validation=tuple(sorted(shuffled[n_train:n_train + n_validation])),
+        test=tuple(sorted(shuffled[n_train + n_validation:])),
+    )
+    result.validate()
+    return result

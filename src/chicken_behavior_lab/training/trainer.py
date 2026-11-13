@@ -343,6 +343,25 @@ class Trainer:
         if isinstance(batch, TemporalBatch):
             return self.model(batch)
 
+        # PyTorch Geometric batches expose graph tensors as attributes.
+        # Pass those tensors explicitly to graph models such as
+        # ChickenBehaviorGNN, whose forward signature is
+        # forward(x, edge_index, edge_attr, batch=None).
+        if hasattr(batch, "x") and hasattr(batch, "edge_index"):
+            edge_attr = getattr(batch, "edge_attr", None)
+            if edge_attr is None:
+                raise ValueError(
+                    "PyG graph batches must provide edge_attr for graph "
+                    "models trained through Trainer."
+                )
+
+            return self.model(
+                batch.x,
+                batch.edge_index,
+                edge_attr,
+                getattr(batch, "batch", None),
+            )
+
         return self.model(batch)
 
     @staticmethod
@@ -355,25 +374,34 @@ class Trainer:
 
         if hasattr(batch, "y"):
             target = batch.y
-
             if target.ndim > 1:
                 target = target.view(-1)
-
             return target.long()
 
-        raise TypeError(
-            "Batch must provide a 'y' target tensor."
-        )
+        if isinstance(batch, (tuple, list)) and len(batch) >= 2:
+            target = batch[-1]
+            if not isinstance(target, torch.Tensor):
+                raise TypeError("The final item in a tuple/list batch must be a target tensor.")
+            return target.reshape(-1).long()
+
+        raise TypeError("Batch must provide a 'y' tensor or a (features, targets) tuple/list.")
 
     def _move_batch_to_device(
         self,
         batch,
     ):
+        if isinstance(batch, torch.Tensor):
+            return batch.to(self.device)
+        if isinstance(batch, tuple):
+            return tuple(self._move_batch_to_device(item) for item in batch)
+        if isinstance(batch, list):
+            return [self._move_batch_to_device(item) for item in batch]
+        if isinstance(batch, dict):
+            return {key: self._move_batch_to_device(value) for key, value in batch.items()}
         if hasattr(batch, "to"):
             return batch.to(self.device)
-
         raise TypeError(
-            "Batch object must implement .to(device)."
+            "Batch items must be tensors, containers of tensors, or expose .to(device)."
         )
 
     def _update_best_checkpoint(

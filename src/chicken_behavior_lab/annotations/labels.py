@@ -1,16 +1,7 @@
-"""
-ChickenBehaviorLab Behavior Labels
-===================================
+"""Canonical behavior label definitions and integer encodings.
 
-Canonical behavior label definitions and encoding utilities.
-
-This module provides a stable mapping between CBO behavior
-identifiers and integer class indices used by machine-learning
-models.
-
-Important:
-    The numerical class IDs are internal ML identifiers.
-    They must not replace the canonical CBO identifiers.
+Canonical behavior IDs remain stable identifiers; integer class indices are
+internal to machine-learning models.
 """
 
 from __future__ import annotations
@@ -20,201 +11,83 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True, slots=True)
 class BehaviorLabel:
-    """
-    Definition of a single behavior class.
-
-    Parameters
-    ----------
-    behavior_id:
-        Stable CBO identifier.
-
-    name:
-        Human-readable behavior name.
-
-    description:
-        Optional description.
-    """
+    """Definition of one canonical behavior class."""
 
     behavior_id: str
-
     name: str
-
     description: str = ""
 
 
 class BehaviorLabelEncoder:
-    """
-    Encode and decode CBO behavior identifiers.
+    """Deterministic mapping between behavior IDs and ML class indices."""
 
-    The encoder maintains a deterministic mapping:
-
-        CBO behavior ID
-                ↓
-        integer class index
-
-    Example
-    -------
-    feeding -> 0
-    walking -> 1
-    standing -> 2
-    """
-
-    def __init__(
-        self,
-        labels: list[BehaviorLabel],
-    ) -> None:
-
+    def __init__(self, labels: list[BehaviorLabel]) -> None:
         if not labels:
-
-            raise ValueError(
-                "labels cannot be empty."
-            )
-
+            raise ValueError("labels cannot be empty.")
+        if any(not isinstance(label, BehaviorLabel) for label in labels):
+            raise TypeError("labels must contain only BehaviorLabel instances.")
         self.labels = tuple(labels)
-
         self._validate_labels()
-
         self._behavior_to_index = {
-            label.behavior_id: index
-            for index, label
-            in enumerate(self.labels)
+            label.behavior_id: index for index, label in enumerate(self.labels)
         }
-
         self._index_to_behavior = {
-            index: label.behavior_id
-            for index, label
-            in enumerate(self.labels)
+            index: label.behavior_id for index, label in enumerate(self.labels)
         }
 
     def _validate_labels(self) -> None:
-        """
-        Validate label definitions.
-        """
-
-        behavior_ids = [
-            label.behavior_id
-            for label in self.labels
-        ]
-
-        if any(
-            not behavior_id
-            for behavior_id
-            in behavior_ids
-        ):
-
-            raise ValueError(
-                "behavior_id cannot be empty."
-            )
-
-        if len(
-            behavior_ids
-        ) != len(
-            set(behavior_ids)
-        ):
-
-            raise ValueError(
-                "behavior_id values must be unique."
-            )
+        behavior_ids = [label.behavior_id for label in self.labels]
+        if any(not isinstance(value, str) or not value.strip() for value in behavior_ids):
+            raise ValueError("behavior_id values must be non-empty strings.")
+        if len(behavior_ids) != len(set(behavior_ids)):
+            raise ValueError("behavior_id values must be unique.")
 
     @property
     def num_classes(self) -> int:
-        """
-        Return number of behavior classes.
-        """
-
         return len(self.labels)
 
-    def encode(
-        self,
-        behavior_id: str,
-    ) -> int:
-        """
-        Convert a CBO behavior ID into
-        an integer class index.
-        """
+    def encode(self, behavior_id: str) -> int:
+        try:
+            return self._behavior_to_index[behavior_id]
+        except KeyError as exc:
+            raise KeyError(f"Unknown behavior_id: {behavior_id}") from exc
 
-        if behavior_id not in (
-            self._behavior_to_index
-        ):
+    def decode(self, index: int) -> str:
+        try:
+            return self._index_to_behavior[index]
+        except KeyError as exc:
+            raise KeyError(f"Unknown class index: {index}") from exc
 
-            raise KeyError(
-                f"Unknown behavior_id: "
-                f"{behavior_id}"
-            )
+    def get_label(self, behavior_id: str) -> BehaviorLabel:
+        return self.labels[self.encode(behavior_id)]
 
-        return self._behavior_to_index[
-            behavior_id
-        ]
 
-    def decode(
-        self,
-        index: int,
-    ) -> str:
-        """
-        Convert an integer class index
-        back to its CBO behavior ID.
-        """
-
-        if index not in (
-            self._index_to_behavior
-        ):
-
-            raise KeyError(
-                f"Unknown class index: "
-                f"{index}"
-            )
-
-        return self._index_to_behavior[
-            index
-        ]
-
-    def get_label(
-        self,
-        behavior_id: str,
-    ) -> BehaviorLabel:
-        """
-        Return the complete BehaviorLabel.
-        """
-
-        index = self.encode(
-            behavior_id
-        )
-
-        return self.labels[index]
-        DEFAULT_BEHAVIOR_LABELS = [
+DEFAULT_BEHAVIOR_LABELS = [
     BehaviorLabel(
         behavior_id="feeding",
         name="Feeding",
-        description=(
-            "Chicken performing feeding-related activity."
-        ),
+        description="Chicken performing feeding-related activity.",
     ),
     BehaviorLabel(
         behavior_id="walking",
         name="Walking",
-        description=(
-            "Chicken performing locomotion."
-        ),
+        description="Chicken performing locomotion.",
     ),
     BehaviorLabel(
         behavior_id="standing",
         name="Standing",
-        description=(
-            "Chicken maintaining a standing posture."
-        ),
+        description="Chicken maintaining a standing posture.",
     ),
     BehaviorLabel(
         behavior_id="drinking",
         name="Drinking",
-        description=(
-            "Chicken performing drinking-related activity."
-        ),
+        description="Chicken performing drinking-related activity.",
     ),
     BehaviorLabel(
         behavior_id="resting",
         name="Resting",
-        description=(
-            "Chicken performing resting-related activity."
-        ),
+        description="Chicken performing resting-related activity.",
     ),
 ]
+
+DEFAULT_BEHAVIOR_ENCODER = BehaviorLabelEncoder(DEFAULT_BEHAVIOR_LABELS)

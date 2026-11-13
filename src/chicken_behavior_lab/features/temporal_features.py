@@ -1,20 +1,4 @@
-"""
-ChickenBehaviorLab Temporal Feature Sequences
-==============================================
-
-Utilities for converting per-frame motion features
-into fixed-length temporal sequences.
-
-The main output representation is:
-
-    T × V × F
-
-where:
-
-    T = number of temporal frames
-    V = number of skeleton keypoints
-    F = number of per-keypoint features
-"""
+"""Build annotation-length or explicitly fixed-length T × V × F sequences."""
 
 from __future__ import annotations
 
@@ -22,320 +6,142 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from chicken_behavior_lab.features.motion import (
-    MotionFeatureFrame,
-)
+from chicken_behavior_lab.core.enums.keypoints import KeypointType
+
+from chicken_behavior_lab.features.motion import MotionFeatureFrame
 
 
 @dataclass(slots=True)
 class TemporalFeatureSequence:
-    """
-    Fixed-length temporal feature sequence.
-
-    Attributes
-    ----------
-    features:
-        Feature tensor with shape:
-
-            (T, V, F)
-
-    frame_mask:
-        Boolean mask indicating which temporal frames
-        contain valid observations.
-
-        Shape:
-
-            (T,)
-
-    keypoint_mask:
-        Boolean mask indicating valid keypoints.
-
-        Shape:
-
-            (T, V)
-
-    frame_ids:
-        Ordered frame identifiers.
-
-    """
+    """Temporal feature sequence with explicit frame and keypoint validity masks."""
 
     features: np.ndarray
-
     frame_mask: np.ndarray
-
     keypoint_mask: np.ndarray
-
     frame_ids: tuple[str, ...]
+    keypoint_types: tuple[KeypointType, ...] | None = None
 
     @property
     def temporal_length(self) -> int:
-        """
-        Number of frames in the sequence.
-        """
-
         return self.features.shape[0]
 
     @property
     def num_keypoints(self) -> int:
-        """
-        Number of keypoints.
-        """
-
         return self.features.shape[1]
 
     @property
     def feature_dimension(self) -> int:
-        """
-        Number of features per keypoint.
-        """
-
         return self.features.shape[2]
 
     @property
     def shape(self) -> tuple[int, int, int]:
-        """
-        Return the tensor shape.
-        """
-
         return self.features.shape
 
 
 class TemporalFeatureBuilder:
+    """Build temporal features.
+
+    By default, preserve every frame supplied for an annotation. Set a
+    positive sequence_length only for legacy fixed-length truncation/padding.
+    Batch padding belongs to TemporalCollator, not this feature builder.
     """
-    Build fixed-length temporal feature sequences.
-    """
 
-    def __init__(
-        self,
-        sequence_length: int = 60,
-    ) -> None:
-        """
-        Parameters
-        ----------
-        sequence_length:
-            Number of frames in each temporal window.
-        """
-
-        if sequence_length <= 0:
-            raise ValueError(
-                "sequence_length must be "
-                "greater than zero."
-            )
-
-        self.sequence_length = (
-            sequence_length
-        )
-
-    # =====================================================
-    # Main builder
-    # =====================================================
+    def __init__(self, sequence_length: int | None = None) -> None:
+        if sequence_length is not None and (
+            isinstance(sequence_length, bool)
+            or not isinstance(sequence_length, int)
+            or sequence_length <= 0
+        ):
+            raise ValueError("sequence_length must be a positive integer or None.")
+        self.sequence_length = sequence_length
 
     def build(
         self,
-        frames: list[
-            MotionFeatureFrame
-        ],
+        frames: list[MotionFeatureFrame],
         frame_ids: list[str] | None = None,
     ) -> TemporalFeatureSequence:
-        """
-        Convert motion feature frames into a fixed-length
-        temporal sequence.
-
-        Parameters
-        ----------
-        frames:
-            Ordered list of MotionFeatureFrame objects.
-
-        frame_ids:
-            Optional frame identifiers.
-
-        Returns
-        -------
-        TemporalFeatureSequence
-            Fixed-length tensor of shape T × V × F.
-        """
-
         if not frames:
-            raise ValueError(
-                "frames cannot be empty."
-            )
+            raise ValueError("frames cannot be empty.")
+        self._validate_frames(frames)
 
-        self._validate_frames(
-            frames
-        )
-
-        num_keypoints = (
-            frames[0].num_keypoints
-        )
-
-        feature_dimension = (
-            frames[0].feature_dimension
-        )
-
+        num_keypoints = frames[0].num_keypoints
+        feature_dimension = frames[0].feature_dimension
         if frame_ids is None:
-
-            frame_ids = [
-                str(index)
-                for index in range(
-                    len(frames)
-                )
-            ]
-
+            frame_ids = [str(index) for index in range(len(frames))]
         if len(frame_ids) != len(frames):
+            raise ValueError("frame_ids must have the same length as frames.")
 
-            raise ValueError(
-                "frame_ids must have the same "
-                "length as frames."
-            )
-
-        # -------------------------------------------------
-        # Keep only the most recent frames
-        # -------------------------------------------------
-
-        selected_frames = frames[
-            -self.sequence_length :
-        ]
-
-        selected_ids = frame_ids[
-            -self.sequence_length :
-        ]
-
-        actual_length = len(
-            selected_frames
-        )
-
-        # -------------------------------------------------
-        # Allocate padded tensor
-        # -------------------------------------------------
+        if self.sequence_length is None:
+            target_length = len(frames)
+            selected_frames = frames
+            selected_ids = frame_ids
+        else:
+            target_length = self.sequence_length
+            selected_frames = frames[-target_length:]
+            selected_ids = frame_ids[-target_length:]
+        actual_length = len(selected_frames)
+        start_index = target_length - actual_length
 
         features = np.zeros(
-            (
-                self.sequence_length,
-                num_keypoints,
-                feature_dimension,
-            ),
-            dtype=np.float32,
+            (target_length, num_keypoints, feature_dimension), dtype=np.float32
         )
+        frame_mask = np.zeros((target_length,), dtype=bool)
+        keypoint_mask = np.zeros((target_length, num_keypoints), dtype=bool)
 
-        frame_mask = np.zeros(
-            self.sequence_length,
-            dtype=bool,
-        )
+        for index, frame in enumerate(selected_frames):
+            target_index = start_index + index
+            features[target_index] = frame.features
+            frame_mask[target_index] = True
 
-        keypoint_mask = np.zeros(
-            (
-                self.sequence_length,
-                num_keypoints,
-            ),
-            dtype=bool,
-        )
+            if frame.keypoint_mask is None:
+                mask = np.all(np.isfinite(frame.features), axis=1)
+            else:
+                mask = np.asarray(frame.keypoint_mask, dtype=bool)
+                if mask.shape != (num_keypoints,):
+                    raise ValueError("frame.keypoint_mask must have shape (num_keypoints,).")
+                mask = mask & np.all(np.isfinite(frame.features), axis=1)
+            keypoint_mask[target_index] = mask
 
-        # -------------------------------------------------
-        # Right-align the temporal window
-        # -------------------------------------------------
-
-        start_index = (
-            self.sequence_length
-            - actual_length
-        )
-
-        for index, frame in enumerate(
-            selected_frames
-        ):
-
-            target_index = (
-                start_index + index
-            )
-
-            features[target_index] = (
-                frame.features
-            )
-
-            frame_mask[
-                target_index
-            ] = True
-
-            # A keypoint is considered valid when
-            # its feature row contains finite values.
-            keypoint_mask[
-                target_index
-            ] = np.all(
-                np.isfinite(
-                    frame.features
-                ),
-                axis=1,
-            )
-
-        padded_ids = [
-            ""
-        ] * start_index
-
-        padded_ids.extend(
-            selected_ids
-        )
-
+        padded_ids = [""] * start_index + list(selected_ids)
         return TemporalFeatureSequence(
             features=features,
             frame_mask=frame_mask,
             keypoint_mask=keypoint_mask,
-            frame_ids=tuple(
-                padded_ids
-            ),
+            frame_ids=tuple(str(item) for item in padded_ids),
+            keypoint_types=frames[0].keypoint_types,
         )
-
-    # =====================================================
-    # Validation
-    # =====================================================
 
     @staticmethod
-    def _validate_frames(
-        frames: list[
-            MotionFeatureFrame
-        ],
-    ) -> None:
-        """
-        Ensure that all frames have compatible shapes.
-        """
-
+    def _validate_frames(frames: list[MotionFeatureFrame]) -> None:
         first = frames[0]
-
-        expected_keypoints = (
-            first.num_keypoints
-        )
-
-        expected_features = (
-            first.feature_dimension
-        )
-
-        for index, frame in enumerate(
-            frames[1:],
-            start=1,
+        if first.features.ndim != 2:
+            raise ValueError("Each frame.features array must have shape (num_keypoints, feature_dimension).")
+        expected_keypoints = first.num_keypoints
+        expected_features = first.feature_dimension
+        expected_keypoint_types = first.keypoint_types
+        if expected_keypoint_types is not None and (
+            len(expected_keypoint_types) != expected_keypoints
+            or len(set(expected_keypoint_types)) != expected_keypoints
         ):
+            raise ValueError("frame 0.keypoint_types must uniquely identify every keypoint.")
 
-            if (
-                frame.num_keypoints
-                != expected_keypoints
-            ):
-
+        for index, frame in enumerate(frames):
+            if frame.features.ndim != 2:
+                raise ValueError(f"frame {index}.features must be a two-dimensional array.")
+            if frame.num_keypoints != expected_keypoints:
                 raise ValueError(
-                    "Inconsistent number of "
-                    f"keypoints at frame {index}: "
-                    f"expected "
-                    f"{expected_keypoints}, "
-                    f"got "
-                    f"{frame.num_keypoints}."
+                    f"Inconsistent number of keypoints at frame {index}: "
+                    f"expected {expected_keypoints}, got {frame.num_keypoints}."
                 )
-
-            if (
-                frame.feature_dimension
-                != expected_features
-            ):
-
+            if frame.keypoint_types != expected_keypoint_types:
                 raise ValueError(
-                    "Inconsistent feature "
-                    f"dimension at frame {index}: "
-                    f"expected "
-                    f"{expected_features}, "
-                    f"got "
-                    f"{frame.feature_dimension}."
+                    f"Inconsistent keypoint order at frame {index}: "
+                    "all frames must use the same keypoint_types."
                 )
+            if frame.feature_dimension != expected_features:
+                raise ValueError(
+                    f"Inconsistent feature dimension at frame {index}: "
+                    f"expected {expected_features}, got {frame.feature_dimension}."
+                )
+            if frame.keypoint_mask is not None and np.asarray(frame.keypoint_mask).shape != (expected_keypoints,):
+                raise ValueError(f"frame {index}.keypoint_mask must have shape (num_keypoints,).")

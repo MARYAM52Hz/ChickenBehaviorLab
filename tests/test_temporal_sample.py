@@ -75,7 +75,7 @@ def test_temporal_graph_sample() -> None:
     assert len(sample) == 3
     assert sample.sequence_length == 3
     assert sample.video_id == "video_001"
-    assert sample.track_id == 1
+    assert sample.track_id == "track_1"
     assert sample.first_frame == 0
     assert sample.last_frame == 2
 

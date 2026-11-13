@@ -3,209 +3,126 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from chicken_behavior_lab.dataset import (
-    DatasetFactory,
-    PyGGraphDataset,
-)
+from chicken_behavior_lab.dataset import DatasetFactory, PyGGraphDataset
 
 
-def create_feature_file(
-    path: Path,
-) -> None:
-
-    node_features = np.random.randn(
-        6,
-        7,
-    ).astype(
-        np.float32
-    )
-
+def create_feature_file(path: Path, offset: float = 0.0) -> None:
+    node_features = (np.arange(42, dtype=np.float32).reshape(6, 7) + offset)
     edge_index = np.array(
-        [
-            [
-                0, 1, 2,
-                3, 4, 5,
-            ],
-            [
-                1, 0, 3,
-                2, 5, 4,
-            ],
-        ],
+        [[0, 1, 2, 3, 4, 5], [1, 0, 3, 2, 5, 4]],
         dtype=np.int64,
     )
-
-    edge_attr = np.random.randn(
-        6,
-        8,
-    ).astype(
-        np.float32
-    )
-
-    np.savez(
-        path,
-        node_features=node_features,
-        edge_index=edge_index,
-        edge_attr=edge_attr,
-    )
+    edge_attr = np.arange(48, dtype=np.float32).reshape(6, 8)
+    np.savez(path, node_features=node_features, edge_index=edge_index, edge_attr=edge_attr)
 
 
-def test_dataset_factory(
-    tmp_path,
-):
+def write_manifest(path: Path, samples: list[dict]) -> None:
+    import json
+    path.write_text(json.dumps({"dataset_version": "0.1.0", "samples": samples}), encoding="utf-8")
 
-    feature_root = (
-        tmp_path
-        / "features"
-    )
 
+def test_dataset_factory_builds_canonical_graph_samples(tmp_path):
+    feature_root = tmp_path / "features"
     feature_root.mkdir()
+    create_feature_file(feature_root / "sample_001.npz")
+    manifest = tmp_path / "annotations.json"
+    write_manifest(manifest, [{
+        "sample_id": "sample_001",
+        "track_id": 1,
+        "video_id": "video_001",
+        "feature_file": "sample_001.npz",
+        "label": "walking",
+    }])
 
-    create_feature_file(
-        feature_root
-        / "sample_001.npz"
-    )
-
-    annotation_file = (
-        tmp_path
-        / "annotations.json"
-    )
-
-    annotation_file.write_text(
-        """
-        {
-          "dataset_version": "0.1.0",
-          "samples": [
-            {
-              "sample_id": "sample_001",
-              "track_id": "track_001",
-              "video_id": "video_001",
-              "feature_file": "sample_001.npz",
-              "label": "walking"
-            }
-          ]
-        }
-        """,
-        encoding="utf-8",
-    )
-
-    factory = DatasetFactory(
-        annotation_file=annotation_file,
-        feature_root=feature_root,
-    )
-
+    factory = DatasetFactory(annotation_file=manifest, feature_root=feature_root)
     samples = factory.build()
 
-    assert len(
-        samples
-    ) == 1
-
+    assert len(samples) == 1
     sample = samples[0]
-
-    assert (
-        sample.sample_id
-        == "sample_001"
-    )
-
-    assert (
-        sample.label
-        == "walking"
-    )
-
-    assert (
-        sample.node_features.shape
-        == (6, 7)
-    )
-
-    assert (
-        sample.edge_index.shape
-        == (2, 6)
-    )
-
-    assert (
-        sample.edge_features.shape
-        == (6, 8)
-    )
+    assert sample.sample_id == "sample_001"
+    assert sample.label == 0
+    assert sample.behavior_id == "walking"
+    assert sample.metadata["track_id"] == "track_1"
+    assert sample.metadata["video_id"] == "video_001"
+    assert sample.graph.node_features.shape == (1, 6, 7)
+    assert sample.graph.edge_index.shape == (2, 6)
+    assert sample.graph.edge_features.shape == (1, 6, 8)
+    assert sample.graph.frame_mask.tolist() == [True]
+    assert sample.graph.node_mask.shape == (1, 6)
+    assert factory.label_to_index == {"walking": 0}
 
 
-def test_pyg_dataset():
+def test_dataset_factory_uses_stable_sorted_label_mapping(tmp_path):
+    feature_root = tmp_path / "features"
+    feature_root.mkdir()
+    create_feature_file(feature_root / "a.npz")
+    create_feature_file(feature_root / "b.npz", offset=100.0)
+    manifest = tmp_path / "annotations.json"
+    write_manifest(manifest, [
+        {"sample_id": "s1", "track_id": "track_1", "video_id": "v1", "feature_file": "a.npz", "label": "walking"},
+        {"sample_id": "s2", "track_id": "track_2", "video_id": "v1", "feature_file": "b.npz", "label": "feeding"},
+    ])
 
-    from chicken_behavior_lab.dataset import (
-        GraphSample,
-    )
+    factory = DatasetFactory(manifest, feature_root)
+    samples = factory.build()
 
-    sample_1 = GraphSample(
-        sample_id="sample_001",
-        node_features=torch.randn(
-            6,
-            7,
-        ),
-        edge_index=torch.tensor(
-            [
-                [0, 1],
-                [1, 0],
-            ],
-            dtype=torch.long,
-        ),
-        edge_features=torch.randn(
-            2,
-            8,
-        ),
-        label="walking",
-        metadata={},
-    )
+    assert factory.label_to_index == {"feeding": 0, "walking": 1}
+    assert {sample.behavior_id: sample.label for sample in samples} == {"walking": 1, "feeding": 0}
 
-    sample_2 = GraphSample(
-        sample_id="sample_002",
-        node_features=torch.randn(
-            6,
-            7,
-        ),
-        edge_index=torch.tensor(
-            [
-                [0, 1],
-                [1, 0],
-            ],
-            dtype=torch.long,
-        ),
-        edge_features=torch.randn(
-            2,
-            8,
-        ),
-        label="feeding",
-        metadata={},
-    )
 
-    dataset = PyGGraphDataset(
-        [
-            sample_1,
-            sample_2,
-        ]
-    )
+def test_dataset_factory_accepts_explicit_label_mapping(tmp_path):
+    feature_root = tmp_path / "features"
+    feature_root.mkdir()
+    create_feature_file(feature_root / "sample.npz")
+    manifest = tmp_path / "annotations.json"
+    write_manifest(manifest, [{
+        "sample_id": "s1", "track_id": "bird-A", "video_id": "v1",
+        "feature_file": "sample.npz", "label": "walking",
+    }])
 
-    assert len(
-        dataset
-    ) == 2
+    factory = DatasetFactory(manifest, feature_root, label_to_index={"walking": 4})
+    sample = factory.build()[0]
+    assert sample.label == 4
+    assert sample.metadata["track_id"] == "bird-A"
 
-    assert (
-        dataset.labels
-        == [
-            "feeding",
-            "walking",
-        ]
-    )
 
+def test_pyg_dataset_adapts_factory_graph_samples(tmp_path):
+    feature_root = tmp_path / "features"
+    feature_root.mkdir()
+    create_feature_file(feature_root / "sample_001.npz")
+    manifest = tmp_path / "annotations.json"
+    write_manifest(manifest, [{
+        "sample_id": "sample_001", "track_id": 1, "video_id": "video_001",
+        "feature_file": "sample_001.npz", "label": "walking",
+    }])
+
+    samples = DatasetFactory(manifest, feature_root).build()
+    dataset = PyGGraphDataset(samples)
+    assert len(dataset) == 1
     data = dataset[0]
+    assert data.x.shape == (1, 6, 7)
+    assert data.edge_index.shape == (2, 6)
+    assert data.edge_attr.shape == (1, 6, 8)
+    assert data.y.dtype == torch.long
+    assert data.y.item() == 0
+    assert data.track_id == "track_1"
+    assert dataset.label_to_index == {"walking": 0}
 
-    assert (
-        data.x.shape
-        == (6, 7)
-    )
 
-    assert (
-        data.edge_attr.shape
-        == (2, 8)
-    )
+def test_dataset_factory_rejects_manifest_with_unknown_label(tmp_path):
+    feature_root = tmp_path / "features"
+    feature_root.mkdir()
+    create_feature_file(feature_root / "sample.npz")
+    manifest = tmp_path / "annotations.json"
+    write_manifest(manifest, [{
+        "sample_id": "s1", "track_id": 1, "video_id": "v1",
+        "feature_file": "sample.npz", "label": "unknown",
+    }])
 
-    assert data.y.shape == (
-        1,
-    )
+    factory = DatasetFactory(manifest, feature_root, label_to_index={"walking": 0})
+    try:
+        factory.build()
+        assert False, "Expected unknown manifest label to be rejected."
+    except ValueError as error:
+        assert "absent from label_to_index" in str(error)
+

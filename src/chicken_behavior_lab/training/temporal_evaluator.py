@@ -15,13 +15,14 @@ from sklearn.metrics import (
 from chicken_behavior_lab.dataset.temporal_batch import (
     TemporalBatch,
 )
+from chicken_behavior_lab.core.identifiers import normalize_track_id
 
 
 @dataclass(slots=True)
 class TemporalPredictionRecord:
     sample_id: str
     video_id: str
-    track_id: int
+    track_id: str | None
     start_frame: int
     end_frame: int
     true_index: int
@@ -36,7 +37,7 @@ class TemporalEvaluationResult:
     y_pred: list[int]
     sample_ids: list[str]
     video_ids: list[str]
-    track_ids: list[int]
+    track_ids: list[str | None]
     prediction_records: list[
         TemporalPredictionRecord
     ]
@@ -105,7 +106,7 @@ class TemporalEvaluator:
 
         sample_ids: list[str] = []
         video_ids: list[str] = []
-        track_ids: list[int] = []
+        track_ids: list[str | None] = []
 
         prediction_records: list[
             TemporalPredictionRecord
@@ -170,9 +171,8 @@ class TemporalEvaluator:
                     index
                 ]
 
-                track_id = int(
-                    batch.track_id[index].item()
-                )
+                raw_track_id = batch.track_id[index]
+                track_id = None if raw_track_id is None else normalize_track_id(raw_track_id)
 
                 start_frame = int(
                     batch.start_frame[index].item()

@@ -6,19 +6,15 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import torch
-from torch import Tensor
 
-from chicken_behavior_lab.dataset.sample import (
-    GraphSample,
-)
+from chicken_behavior_lab.core.identifiers import normalize_track_id
+from chicken_behavior_lab.dataset.sample import GraphSample
+from chicken_behavior_lab.graph.graph import TemporalSkeletonGraph
 
 
 @dataclass(frozen=True, slots=True)
 class AnnotationRecord:
-    """
-    One annotation record from the dataset manifest.
-    """
+    """One sample entry in a feature-manifest JSON file."""
 
     sample_id: str
     track_id: str
@@ -26,331 +22,147 @@ class AnnotationRecord:
     feature_file: Path
     label: str
 
+    def __post_init__(self) -> None:
+        if not self.sample_id or not self.video_id or not self.label:
+            raise ValueError("sample_id, video_id, and label must be non-empty.")
+        object.__setattr__(self, "track_id", normalize_track_id(self.track_id))
+
 
 class DatasetFactory:
-    """
-    Converts annotation records and feature files
-    into GraphSample objects.
+    """Build canonical GraphSamples from a manifest and NumPy feature files.
+
+    Feature files use node_features[N,F] (or [T,N,F]), edge_index[2,E],
+    and edge_attr[E,D] (or [T,E,D]). Single-frame arrays are promoted to a
+    temporal dimension of length one.
     """
 
     def __init__(
         self,
         annotation_file: str | Path,
         feature_root: str | Path | None = None,
+        *,
+        label_to_index: dict[str, int] | None = None,
     ) -> None:
-
-        self.annotation_file = Path(
-            annotation_file
+        self.annotation_file = Path(annotation_file)
+        self.feature_root = (
+            self.annotation_file.parent
+            if feature_root is None
+            else Path(feature_root)
         )
-
-        if feature_root is None:
-            self.feature_root = (
-                self.annotation_file.parent
-            )
-        else:
-            self.feature_root = Path(
-                feature_root
-            )
-
-    # =====================================================
-    # Public API
-    # =====================================================
+        self._provided_label_to_index = (
+            dict(label_to_index) if label_to_index is not None else None
+        )
+        self.label_to_index: dict[str, int] = {}
 
     def build(self) -> list[GraphSample]:
-        """
-        Build the complete graph dataset.
-        """
+        """Load a manifest and create validated graph samples."""
+        records = self._load_annotations()
+        if not records:
+            raise ValueError("Annotation manifest contains no samples.")
 
-        records = (
-            self._load_annotations()
-        )
+        if self._provided_label_to_index is None:
+            labels = sorted({record.label for record in records})
+            self.label_to_index = {label: index for index, label in enumerate(labels)}
+        else:
+            self.label_to_index = dict(self._provided_label_to_index)
+            if len(set(self.label_to_index.values())) != len(self.label_to_index):
+                raise ValueError("label_to_index values must be unique.")
+            missing = sorted({record.label for record in records} - self.label_to_index.keys())
+            if missing:
+                raise ValueError(f"Manifest contains labels absent from label_to_index: {missing}.")
 
-        samples: list[GraphSample] = []
+        sample_ids = [record.sample_id for record in records]
+        if len(sample_ids) != len(set(sample_ids)):
+            raise ValueError("Manifest sample_id values must be unique.")
 
-        for record in records:
-
-            sample = (
-                self._build_sample(
-                    record
-                )
-            )
-
-            samples.append(
-                sample
-            )
-
+        samples = [self._build_sample(record) for record in records]
         return samples
 
-    # =====================================================
-    # Annotation loading
-    # =====================================================
-
-    def _load_annotations(
-        self,
-    ) -> list[AnnotationRecord]:
-
+    def _load_annotations(self) -> list[AnnotationRecord]:
         if not self.annotation_file.exists():
-            raise FileNotFoundError(
-                "Annotation file not found: "
-                f"{self.annotation_file}"
-            )
+            raise FileNotFoundError(f"Annotation file not found: {self.annotation_file}")
+        if self.annotation_file.suffix.lower() != ".json":
+            raise ValueError("DatasetFactory expects a JSON manifest.")
+        try:
+            payload: Any = json.loads(self.annotation_file.read_text(encoding="utf-8-sig"))
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Invalid dataset manifest JSON: {exc}") from exc
+        if not isinstance(payload, dict) or not isinstance(payload.get("samples"), list):
+            raise ValueError("Annotation manifest must contain a 'samples' list.")
 
-        with self.annotation_file.open(
-            "r",
-            encoding="utf-8",
-        ) as file:
-
-            payload: dict[str, Any] = (
-                json.load(file)
-            )
-
-        if "samples" not in payload:
-            raise ValueError(
-                "Annotation file must contain "
-                "a 'samples' field."
-            )
-
-        raw_samples = payload[
-            "samples"
-        ]
-
-        if not isinstance(
-            raw_samples,
-            list,
-        ):
-            raise ValueError(
-                "'samples' must be a list."
-            )
-
-        records: list[
-            AnnotationRecord
-        ] = []
-
-        for index, item in enumerate(
-            raw_samples
-        ):
-
-            if not isinstance(
-                item,
-                dict,
-            ):
-                raise ValueError(
-                    f"Sample {index} must "
-                    "be an object."
-                )
-
-            required_fields = [
-                "sample_id",
-                "track_id",
-                "video_id",
-                "feature_file",
-                "label",
-            ]
-
-            for field in required_fields:
-
-                if field not in item:
-                    raise ValueError(
-                        f"Sample {index} is "
-                        f"missing '{field}'."
-                    )
-
-            feature_file = Path(
-                item["feature_file"]
-            )
-
+        records: list[AnnotationRecord] = []
+        required = {"sample_id", "track_id", "video_id", "feature_file", "label"}
+        for index, item in enumerate(payload["samples"]):
+            if not isinstance(item, dict):
+                raise ValueError(f"Sample {index} must be a JSON object.")
+            missing = sorted(required - item.keys())
+            if missing:
+                raise ValueError(f"Sample {index} is missing required field(s): {missing}.")
+            feature_file = Path(item["feature_file"])
             if not feature_file.is_absolute():
-                feature_file = (
-                    self.feature_root
-                    / feature_file
-                )
-
+                feature_file = self.feature_root / feature_file
             records.append(
                 AnnotationRecord(
-                    sample_id=str(
-                        item["sample_id"]
-                    ),
-                    track_id=str(
-                        item["track_id"]
-                    ),
-                    video_id=str(
-                        item["video_id"]
-                    ),
+                    sample_id=str(item["sample_id"]),
+                    track_id=item["track_id"],
+                    video_id=str(item["video_id"]),
                     feature_file=feature_file,
-                    label=str(
-                        item["label"]
-                    ),
+                    label=str(item["label"]),
                 )
             )
-
         return records
 
-    # =====================================================
-    # Feature loading
-    # =====================================================
-
     @staticmethod
-    def _load_feature_file(
-        feature_file: Path,
-    ) -> tuple[
-        Tensor,
-        Tensor,
-        Tensor,
-    ]:
-
+    def _load_feature_file(feature_file: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray | None, np.ndarray | None]:
         if not feature_file.exists():
-            raise FileNotFoundError(
-                "Feature file not found: "
-                f"{feature_file}"
-            )
+            raise FileNotFoundError(f"Feature file not found: {feature_file}")
+        with np.load(feature_file, allow_pickle=False) as data:
+            required = {"node_features", "edge_index", "edge_attr"}
+            missing = sorted(required - set(data.files))
+            if missing:
+                raise ValueError(f"Feature file {feature_file} is missing fields: {missing}.")
+            node_features = np.asarray(data["node_features"], dtype=np.float32)
+            edge_index = np.asarray(data["edge_index"], dtype=np.int64)
+            edge_attr = np.asarray(data["edge_attr"], dtype=np.float32)
+            frame_mask = np.asarray(data["frame_mask"], dtype=bool) if "frame_mask" in data else None
+            node_mask = np.asarray(data["node_mask"], dtype=bool) if "node_mask" in data else None
+        if node_features.ndim == 2:
+            node_features = node_features[None, ...]
+        if edge_attr.ndim == 2:
+            edge_attr = edge_attr[None, ...]
+        return node_features, edge_index, edge_attr, frame_mask, node_mask
 
-        with np.load(
-            feature_file,
-            allow_pickle=False,
-        ) as data:
+    def _build_sample(self, record: AnnotationRecord) -> GraphSample:
+        node_features, edge_index, edge_attr, frame_mask, node_mask = self._load_feature_file(record.feature_file)
+        temporal_length, num_nodes, _ = node_features.shape
+        if edge_index.ndim != 2 or edge_index.shape[0] != 2:
+            raise ValueError(f"{record.sample_id}: edge_index must have shape (2, E).")
+        if edge_attr.ndim != 3 or edge_attr.shape[:2] != (temporal_length, edge_index.shape[1]):
+            raise ValueError(f"{record.sample_id}: edge_attr must have shape (T, E, D).")
+        if frame_mask is None:
+            frame_mask = np.ones((temporal_length,), dtype=bool)
+        if node_mask is None:
+            node_mask = np.ones((temporal_length, num_nodes), dtype=bool)
 
-            required_fields = [
-                "node_features",
-                "edge_index",
-                "edge_attr",
-            ]
-
-            for field in required_fields:
-
-                if field not in data:
-                    raise ValueError(
-                        f"Feature file "
-                        f"{feature_file} "
-                        f"is missing '{field}'."
-                    )
-
-            node_features = torch.as_tensor(
-                data["node_features"],
-                dtype=torch.float32,
-            )
-
-            edge_index = torch.as_tensor(
-                data["edge_index"],
-                dtype=torch.long,
-            )
-
-            edge_attr = torch.as_tensor(
-                data["edge_attr"],
-                dtype=torch.float32,
-            )
-
-        return (
-            node_features,
-            edge_index,
-            edge_attr,
-        )
-
-    # =====================================================
-    # GraphSample construction
-    # =====================================================
-
-    def _build_sample(
-        self,
-        record: AnnotationRecord,
-    ) -> GraphSample:
-
-        (
-            node_features,
-            edge_index,
-            edge_attr,
-        ) = self._load_feature_file(
-            record.feature_file
-        )
-
-        self._validate_graph(
+        graph = TemporalSkeletonGraph(
             node_features=node_features,
             edge_index=edge_index,
-            edge_attr=edge_attr,
-            sample_id=record.sample_id,
-        )
-
-        return GraphSample(
-            sample_id=record.sample_id,
-            node_features=node_features,
-            edge_index=edge_index,
+            frame_mask=frame_mask,
+            node_mask=node_mask,
             edge_features=edge_attr,
-            label=record.label,
+        )
+        graph.validate()
+        sample = GraphSample(
+            graph=graph,
+            label=self.label_to_index[record.label],
+            behavior_id=record.label,
+            sample_id=record.sample_id,
             metadata={
-                "track_id": record.track_id,
                 "video_id": record.video_id,
+                "track_id": record.track_id,
+                "start_frame": 0,
+                "end_frame": temporal_length - 1,
             },
         )
-
-    # =====================================================
-    # Validation
-    # =====================================================
-
-    @staticmethod
-    def _validate_graph(
-        node_features: Tensor,
-        edge_index: Tensor,
-        edge_attr: Tensor,
-        sample_id: str,
-    ) -> None:
-
-        if node_features.ndim != 2:
-            raise ValueError(
-                f"{sample_id}: "
-                "node_features must have "
-                "shape (N, F)."
-            )
-
-        if edge_index.ndim != 2:
-            raise ValueError(
-                f"{sample_id}: "
-                "edge_index must have "
-                "shape (2, E)."
-            )
-
-        if edge_index.shape[0] != 2:
-            raise ValueError(
-                f"{sample_id}: "
-                "edge_index must have "
-                "shape (2, E)."
-            )
-
-        if edge_attr.ndim != 2:
-            raise ValueError(
-                f"{sample_id}: "
-                "edge_attr must have "
-                "shape (E, D)."
-            )
-
-        if (
-            edge_index.shape[1]
-            != edge_attr.shape[0]
-        ):
-            raise ValueError(
-                f"{sample_id}: "
-                "edge count in edge_index "
-                "does not match edge_attr."
-            )
-
-        num_nodes = (
-            node_features.shape[0]
-        )
-
-        if edge_index.numel() > 0:
-
-            if torch.any(
-                edge_index < 0
-            ):
-                raise ValueError(
-                    f"{sample_id}: "
-                    "edge_index contains "
-                    "negative indices."
-                )
-
-            if torch.any(
-                edge_index >= num_nodes
-            ):
-                raise ValueError(
-                    f"{sample_id}: "
-                    "edge_index references "
-                    "non-existing nodes."
-                )
+        sample.validate()
+        return sample

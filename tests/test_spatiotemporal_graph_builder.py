@@ -205,3 +205,18 @@ def test_frame_ids_preserved():
         "100",
         "101",
     )
+
+
+def test_spatiotemporal_graph_preserves_flattened_masks_and_masks_invalid_edges():
+    sequence = create_sequence()
+    sequence.frame_mask[1] = False
+    sequence.keypoint_mask[0, 1] = False
+    skeleton_edges = np.array([[0, 1], [1, 2]], dtype=np.int64)
+    graph = SpatioTemporalGraphBuilder(skeleton_edges).build(sequence)
+
+    expected_node_mask = (sequence.keypoint_mask & sequence.frame_mask[:, None]).reshape(-1)
+    assert np.array_equal(graph.frame_mask, sequence.frame_mask)
+    assert np.array_equal(graph.node_mask, expected_node_mask)
+    source, target = graph.edge_index
+    invalid_edges = ~(expected_node_mask[source] & expected_node_mask[target])
+    assert np.allclose(graph.edge_features[invalid_edges, :-1], 0.0)

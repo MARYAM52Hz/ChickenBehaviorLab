@@ -238,9 +238,9 @@ class TemporalSkeletonGraph:
 
     edge_index: np.ndarray
 
-    frame_mask: np.ndarray
+    frame_mask: np.ndarray | None = None
 
-    node_mask: np.ndarray
+    node_mask: np.ndarray | None = None
 
     edge_features: np.ndarray | None = None
 
@@ -327,10 +327,9 @@ class TemporalSkeletonGraph:
         # Frame mask
         # -------------------------------------------------
 
-        if self.frame_mask.shape != (
-            temporal_length,
-        ):
-
+        if self.frame_mask is None:
+            self.frame_mask = np.ones((temporal_length,), dtype=bool)
+        elif self.frame_mask.shape != (temporal_length,):
             raise ValueError(
                 "frame_mask must have shape "
                 "(T,)."
@@ -340,11 +339,9 @@ class TemporalSkeletonGraph:
         # Node mask
         # -------------------------------------------------
 
-        if self.node_mask.shape != (
-            temporal_length,
-            num_nodes,
-        ):
-
+        if self.node_mask is None:
+            self.node_mask = np.ones((temporal_length, num_nodes), dtype=bool)
+        elif self.node_mask.shape != (temporal_length, num_nodes):
             raise ValueError(
                 "node_mask must have shape "
                 "(T, V)."

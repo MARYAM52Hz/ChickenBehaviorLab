@@ -170,15 +170,19 @@ class SpatioTemporalGraphBuilder:
         )
 
         # =================================================
-        # Edge features
+        # Validity masks and edge features
         # =================================================
 
-        edge_features = (
-            self._build_edge_features(
-                node_features=node_features,
-                edge_index=edge_index,
-                edge_type=edge_type,
-            )
+        node_mask = (
+            sequence.keypoint_mask
+            & sequence.frame_mask[:, None]
+        ).reshape(-1).copy()
+
+        edge_features = self._build_edge_features(
+            node_features=node_features,
+            edge_index=edge_index,
+            edge_type=edge_type,
+            node_mask=node_mask,
         )
 
         # =================================================
@@ -195,6 +199,8 @@ class SpatioTemporalGraphBuilder:
             ),
             num_frames=num_frames,
             num_keypoints=num_keypoints,
+            frame_mask=sequence.frame_mask.copy(),
+            node_mask=node_mask,
         )
 
         graph.validate()
@@ -206,6 +212,7 @@ class SpatioTemporalGraphBuilder:
         node_features: np.ndarray,
         edge_index: np.ndarray,
         edge_type: np.ndarray,
+        node_mask: np.ndarray | None = None,
     ) -> np.ndarray:
         """
         Build initial edge attributes.
@@ -247,6 +254,11 @@ class SpatioTemporalGraphBuilder:
             node_features[target]
             - node_features[source]
         )
+        if node_mask is not None:
+            if node_mask.shape != (node_features.shape[0],):
+                raise ValueError("node_mask must have shape (num_nodes,).")
+            edge_valid = node_mask[source] & node_mask[target]
+            feature_difference[~edge_valid] = 0.0
 
         edge_type_feature = (
             edge_type.astype(

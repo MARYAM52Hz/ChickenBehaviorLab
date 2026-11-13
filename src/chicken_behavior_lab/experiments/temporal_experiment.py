@@ -25,9 +25,6 @@ from chicken_behavior_lab.dataset.split_diagnostics import (
     inspect_split_quality,
 )
 from chicken_behavior_lab.dataset.group_split import GroupAwareSplitter
-from chicken_behavior_lab.dataset.temporal_builder import (
-    TemporalSequenceBuilder,
-)
 from chicken_behavior_lab.dataset.temporal_pyg_dataset import (
     TemporalPyGDataset,
 )
@@ -60,6 +57,8 @@ from chicken_behavior_lab.training.trainer_factory import build_trainer
 class TemporalExperimentConfig:
     """Configuration for a reproducible temporal behavior experiment."""
 
+    # Deprecated compatibility fields. Annotation-level samples already
+    # contain their complete temporal interval; these values are not used.
     sequence_length: int = 16
     sequence_stride: int = 4
 
@@ -187,6 +186,18 @@ class TemporalExperimentData:
     split_result: Any
     split_diagnostics: Any
 
+    @property
+    def train_temporal(self) -> list[Any]:
+        return self.train_temporal_samples
+
+    @property
+    def validation_temporal(self) -> list[Any]:
+        return self.validation_temporal_samples
+
+    @property
+    def test_temporal(self) -> list[Any]:
+        return self.test_temporal_samples
+
 
 @dataclass(slots=True)
 class TemporalExperimentResult:
@@ -212,6 +223,30 @@ class TemporalExperimentResult:
     split_diagnostics: dict[str, Any]
 
     prediction_records: list[dict[str, Any]] = field(default_factory=list)
+
+    @property
+    def train_size(self) -> int:
+        return self.num_train_samples
+
+    @property
+    def validation_size(self) -> int:
+        return self.num_validation_samples
+
+    @property
+    def test_size(self) -> int:
+        return self.num_test_samples
+
+    @property
+    def train_temporal_size(self) -> int:
+        return self.num_train_sequences
+
+    @property
+    def validation_temporal_size(self) -> int:
+        return self.num_validation_sequences
+
+    @property
+    def test_temporal_size(self) -> int:
+        return self.num_test_sequences
 
 
 # ---------------------------------------------------------------------------
@@ -423,7 +458,7 @@ class TemporalExperiment:
 
         if x is None or x.ndim != 3:
             raise ValueError(
-                "Expected temporal node features with shape [T, N, F_node]."
+                "Expected annotation-level temporal node features with shape [T, N, F_node]."
             )
 
         return {
@@ -450,7 +485,7 @@ class TemporalExperiment:
     def prepare_data(
         self,
         graph_samples: Sequence[Any],
-        annotation_set: AnnotationSet,
+        annotation_set: AnnotationSet | Sequence[AnnotationSet],
     ) -> TemporalExperimentData:
         """Align annotations, split groups, validate splits, and build windows."""
         if not graph_samples:
@@ -575,35 +610,13 @@ class TemporalExperiment:
             label_mapping,
         )
 
-        # 6. Create temporal windows independently within each split.
-        builder = TemporalSequenceBuilder(
-            sequence_length=self.config.sequence_length,
-            sequence_stride=self.config.sequence_stride,
-        )
+        # 6. Each annotation is already one complete temporal sample.
+        # Do not create a second layer of temporal windows.
+        train_temporal_samples = list(train_samples)
+        validation_temporal_samples = list(validation_samples)
+        test_temporal_samples = list(test_samples)
 
-        train_temporal_samples = list(builder.build(train_samples))
-        validation_temporal_samples = list(builder.build(validation_samples))
-        test_temporal_samples = list(builder.build(test_samples))
-
-        if not train_temporal_samples:
-            raise ValueError(
-                "No training temporal windows were generated. "
-                "Check sequence_length and the number of samples per track."
-            )
-
-        if not validation_temporal_samples:
-            raise ValueError(
-                "No validation temporal windows were generated. "
-                "Check sequence_length and the number of samples per track."
-            )
-
-        if not test_temporal_samples:
-            raise ValueError(
-                "No test temporal windows were generated. "
-                "Check sequence_length and the number of samples per track."
-            )
-
-        # 7. Convert temporal samples to PyTorch Geometric datasets.
+        # 7. Convert annotation-level temporal graphs to PyG datasets.
         train_dataset = TemporalPyGDataset(
             train_temporal_samples,
             label_to_index=label_mapping,
@@ -825,6 +838,12 @@ class TemporalExperiment:
         """Train the model and evaluate it once on the held-out test split."""
         if data is not None:
             self._prepared_data = data
+
+        if self.model is None and self._prepared_data is None:
+            raise RuntimeError(
+                "Model has not been built and data has not been prepared; "
+                "call prepare_data() and build_model() first."
+            )
 
         prepared = self.prepared_data
 

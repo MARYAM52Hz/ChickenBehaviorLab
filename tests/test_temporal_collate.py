@@ -1,190 +1,71 @@
+from __future__ import annotations
+
 import numpy as np
 import torch
 
-from types import SimpleNamespace
-
-from chicken_behavior_lab.dataset.sample import (
-    GraphSample,
-)
-
-from chicken_behavior_lab.dataset.temporal_sample import (
-    TemporalGraphSample,
-)
-
-from chicken_behavior_lab.dataset.temporal_pyg_dataset import (
-    TemporalPyGDataset,
-)
-
-from chicken_behavior_lab.dataset.temporal_collate import (
-    TemporalCollator,
-)
+from chicken_behavior_lab.dataset.sample import GraphSample
+from chicken_behavior_lab.dataset.temporal_pyg_dataset import TemporalPyGDataset
+from chicken_behavior_lab.dataset.temporal_collate import TemporalCollator
+from chicken_behavior_lab.graph.graph import TemporalSkeletonGraph
 
 
-def make_graph(
-    offset: float,
-):
-    return SimpleNamespace(
-        node_features=np.array(
-            [
-                [1.0 + offset, 2.0],
-                [3.0 + offset, 4.0],
-                [5.0 + offset, 6.0],
-            ],
-            dtype=np.float32,
-        ),
-        edge_index=np.array(
-            [
-                [0, 1, 1, 2],
-                [1, 0, 2, 1],
-            ],
-            dtype=np.int64,
-        ),
-        edge_features=np.array(
-            [
-                [0.1, 0.2],
-                [0.1, 0.2],
-                [0.2, 0.3],
-                [0.2, 0.3],
-            ],
-            dtype=np.float32,
-        ),
-        validate=lambda: None,
+def make_sample(sample_id: str, length: int, start: int):
+    features = np.ones((length, 3, 2), dtype=np.float32)
+    frame_mask = np.ones(length, dtype=bool)
+    node_mask = np.ones((length, 3), dtype=bool)
+    if length > 1:
+        node_mask[1, 2] = False
+    graph = TemporalSkeletonGraph(
+        node_features=features,
+        edge_index=np.asarray([[0, 1, 1, 2], [1, 0, 2, 1]], dtype=np.int64),
+        frame_mask=frame_mask,
+        node_mask=node_mask,
+        edge_features=np.ones((length, 4, 2), dtype=np.float32),
     )
-
-
-def make_sequence(
-    sample_id: str,
-    offset: float,
-):
-    graphs = []
-
-    for index in range(3):
-        graphs.append(
-            GraphSample(
-                graph=make_graph(
-                    offset + index
-                ),
-                label=0,
-                behavior_id="feeding",
-                sample_id=(
-                    f"{sample_id}_graph_{index}"
-                ),
-                metadata={
-                    "video_id": "video_001",
-                    "track_id": 1,
-                    "start_frame": (
-                        100 + index * 10
-                    ),
-                    "end_frame": (
-                        109 + index * 10
-                    ),
-                },
-            )
-        )
-
-    return TemporalGraphSample(
-        graphs=graphs,
+    return GraphSample(
+        graph=graph,
         label=0,
         behavior_id="feeding",
         sample_id=sample_id,
         metadata={
-            "video_id": "video_001",
+            "video_id": f"video_{sample_id}",
             "track_id": 1,
+            "start_frame": start,
+            "end_frame": start + length - 1,
         },
     )
 
 
-def test_temporal_collator():
-    temporal_samples = [
-        make_sequence(
-            "sequence_001",
-            0.0,
-        ),
-        make_sequence(
-            "sequence_002",
-            10.0,
-        ),
+def test_temporal_collator_pads_variable_length_samples_and_preserves_masks():
+    dataset = TemporalPyGDataset([
+        make_sample("short", 2, 10),
+        make_sample("long", 4, 20),
+    ])
+    batch = TemporalCollator()([dataset[0], dataset[1]])
+
+    assert batch.x.shape == (2, 4, 3, 2)
+    assert batch.frame_mask.tolist() == [
+        [True, True, False, False],
+        [True, True, True, True],
     ]
-
-    dataset = TemporalPyGDataset(
-        temporal_samples
-    )
-
-    data_list = [
-        dataset[0],
-        dataset[1],
-    ]
-
-    collator = TemporalCollator()
-
-    batch = collator(
-        data_list
-    )
-
-    assert batch.x.shape == (
-        2,
-        3,
-        3,
-        2,
-    )
-
-    assert batch.edge_index.shape == (
-        2,
-        4,
-    )
-
-    assert batch.edge_attr.shape == (
-        2,
-        3,
-        4,
-        2,
-    )
-
-    assert batch.y.shape == (
-        2,
-    )
-
-    assert batch.sample_id == [
-        "sequence_001",
-        "sequence_002",
-    ]
-
-    assert batch.track_id.tolist() == [
-        1,
-        1,
-    ]
-
-    assert batch.start_frame.tolist() == [
-        100,
-        100,
-    ]
-
-    assert batch.end_frame.tolist() == [
-        129,
-        129,
-    ]
+    assert batch.node_mask.shape == (2, 4, 3)
+    assert batch.edge_mask.shape == (2, 4, 4)
+    assert not batch.node_mask[0, 2:].any()
+    assert not batch.edge_mask[0, 2:].any()
+    assert batch.edge_attr.shape == (2, 4, 4, 2)
+    assert len(batch.frame_batches) == 4
+    assert batch.frame_batches[0].num_graphs == 2
+    assert batch.frame_batches[0].edge_attr.shape[0] == 8
+    # At t=1, the two edges incident to the invalid third node are omitted
+    # from that sample's message-passing graph.
+    assert batch.frame_batches[1].edge_attr.shape[0] == 4
 
 
 def test_temporal_batch_to_device():
-    temporal_samples = [
-        make_sequence(
-            "sequence_001",
-            0.0,
-        ),
-    ]
-
-    dataset = TemporalPyGDataset(
-        temporal_samples
-    )
-
-    batch = TemporalCollator()(
-        [dataset[0]]
-    )
-
-    moved = batch.to(
-        torch.device("cpu")
-    )
-
-    assert moved.x.device.type == "cpu"
-    assert moved.edge_index.device.type == "cpu"
-    assert moved.y.device.type == "cpu"
+    dataset = TemporalPyGDataset([make_sample("single", 2, 0)])
+    batch = TemporalCollator()([dataset[0]]).to(torch.device("cpu"))
+    assert batch.x.device.type == "cpu"
+    assert batch.frame_mask.device.type == "cpu"
+    assert batch.node_mask.device.type == "cpu"
+    assert batch.edge_mask.device.type == "cpu"
+    assert batch.frame_batches[0].x.device.type == "cpu"

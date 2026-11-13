@@ -79,6 +79,8 @@ class SpatioTemporalGraph:
 
     num_frames: int
     num_keypoints: int
+    frame_mask: np.ndarray | None = None
+    node_mask: np.ndarray | None = None
 
     def validate(self) -> None:
         """
@@ -146,6 +148,12 @@ class SpatioTemporalGraph:
                 "frame_ids length must match "
                 "num_frames."
             )
+
+        if self.frame_mask is not None and self.frame_mask.shape != (self.num_frames,):
+            raise ValueError("frame_mask must have shape (T,).")
+
+        if self.node_mask is not None and self.node_mask.shape != (num_nodes,):
+            raise ValueError("node_mask must have shape (T * V,).")
 
         if num_edges > 0:
             if np.any(self.edge_index < 0):
