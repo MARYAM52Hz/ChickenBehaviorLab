@@ -64,6 +64,7 @@ def split_dataset_by_group(
 
     sample_groups: list[str] = []
     group_labels: dict[str, list[str]] = {}
+    labels_available: bool | None = None
 
     for index in range(len(dataset)):
         sample = dataset[index]
@@ -73,12 +74,16 @@ def split_dataset_by_group(
         behavior_id = getattr(sample, "behavior_id", None)
         if behavior_id is None:
             behavior_id = getattr(sample, "label", None)
-        if behavior_id is None:
+        has_label = behavior_id is not None
+        if labels_available is None:
+            labels_available = has_label
+        elif labels_available != has_label:
             raise ValueError(
-                "Stratified group splitting requires each sample to expose "
-                "behavior_id or label."
+                "Stratified group splitting requires labels on every sample "
+                "or on none of them."
             )
-        group_labels.setdefault(group_id, []).append(str(behavior_id))
+        if has_label:
+            group_labels.setdefault(group_id, []).append(str(behavior_id))
 
     unique_groups = sorted(set(sample_groups))
     split_groups = split_group_ids(
@@ -87,7 +92,7 @@ def split_dataset_by_group(
         validation_ratio=validation_ratio,
         test_ratio=test_ratio,
         seed=seed,
-        group_labels=group_labels,
+        group_labels=group_labels if labels_available else None,
     )
 
     train_set = set(
