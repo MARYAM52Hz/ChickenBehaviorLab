@@ -89,3 +89,54 @@ def test_homogeneous_behavior_windows_are_supported():
     )
     assert temporal_splits.train
     assert all(len({sample.behavior_id for sample in window.samples}) == 1 for window in temporal_splits.train)
+
+def test_three_way_dataset_split_stratifies_before_temporal_windowing():
+    samples = []
+    for video_number in range(9):
+        video_id = f"behavior_video_{video_number:03d}"
+        behaviors = []
+        if video_number < 6:
+            behaviors.append(("feeding", 0))
+        if video_number >= 3:
+            behaviors.append(("walking", 1))
+        for behavior_id, label in behaviors:
+            for frame in range(4):
+                graph = TemporalSkeletonGraph(
+                    node_features=np.asarray(
+                        [[[float(frame), 0.0]]], dtype=np.float32
+                    ),
+                    edge_index=np.empty((2, 0), dtype=np.int64),
+                )
+                samples.append(
+                    GraphSample(
+                        graph=graph,
+                        label=label,
+                        behavior_id=behavior_id,
+                        sample_id=f"{video_id}_{behavior_id}_{frame}",
+                        metadata={
+                            "video_id": video_id,
+                            "track_id": 1,
+                            "start_frame": frame,
+                            "end_frame": frame,
+                        },
+                    )
+                )
+
+    dataset = Dataset(samples)
+    splits = split_dataset_by_group(
+        dataset,
+        group_by="video",
+        train_ratio=0.5,
+        validation_ratio=0.25,
+        test_ratio=0.25,
+        seed=31,
+    )
+
+    for subset in (splits.train, splits.validation, splits.test):
+        labels = {subset[index].behavior_id for index in range(len(subset))}
+        assert labels == {"feeding", "walking"}
+
+    assert set(splits.train.indices).isdisjoint(splits.validation.indices)
+    assert set(splits.train.indices).isdisjoint(splits.test.indices)
+    assert set(splits.validation.indices).isdisjoint(splits.test.indices)
+
