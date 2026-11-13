@@ -582,8 +582,14 @@ def split_group_ids(
     validation_ratio: float = 0.15,
     test_ratio: float = 0.15,
     seed: int = 42,
+    group_labels: dict[str, Sequence[str]] | None = None,
 ) -> SplitGroups:
-    """Deterministically divide unique group IDs without splitting a group."""
+    """Divide unique group IDs, optionally balancing behavior labels.
+
+    Without group_labels this retains the legacy seeded random split.
+    When labels are supplied, each group remains indivisible and the shared
+    stratified assignment routine is used.
+    """
     ratios = (train_ratio, validation_ratio, test_ratio)
     if any(isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0 for value in ratios):
         raise ValueError("All split ratios must be positive numbers.")
@@ -593,6 +599,27 @@ def split_group_ids(
     unique = sorted({str(group) for group in groups})
     if len(unique) < 3:
         raise ValueError("At least three distinct groups are required for splitting.")
+
+    if group_labels is not None:
+        normalized_labels = {
+            str(group): labels for group, labels in group_labels.items()
+        }
+        if set(normalized_labels) != set(unique):
+            raise ValueError(
+                "group_labels must contain exactly one entry for every input group."
+            )
+        assignment = stratified_group_assignment(
+            normalized_labels,
+            ratios,
+            seed=seed,
+        )
+        result = SplitGroups(
+            train=tuple(sorted(group for group, split_index in assignment.items() if split_index == 0)),
+            validation=tuple(sorted(group for group, split_index in assignment.items() if split_index == 1)),
+            test=tuple(sorted(group for group, split_index in assignment.items() if split_index == 2)),
+        )
+        result.validate()
+        return result
 
     import random
 
