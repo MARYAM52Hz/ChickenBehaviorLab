@@ -55,6 +55,21 @@ Track-level splitting must use the pair `(video_id, track_id)`; track IDs alone
 are not globally unique. Label mappings are derived from training samples and
 reused unchanged for validation and test.
 
+The dataset-level two-way and three-way splitters use the same stratified
+group-assignment routine. It balances behavior annotation counts, group
+counts, and total sample counts while keeping every group intact. Rare
+behaviors receive priority during assignment; multiple seeded restarts and
+local group moves reduce sensitivity to the initial ordering. The random seed
+makes a given input split reproducible.
+
+Stratification cannot create independent examples that do not exist. A
+behavior present in one group can only occur in one split and is preferentially
+kept in training. Coverage across two or three splits is only possible when
+the behavior occurs in at least two or three distinct groups, respectively;
+even then, co-occurring labels and group constraints can make full coverage
+infeasible. The split diagnostics report per-class sample counts, the number
+of distinct groups containing each behavior, and which splits contain it.
+
 ## Legacy components and API compatibility
 
 `TemporalSequenceBuilder` and `TemporalGraphSample` remain available for
