@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import importlib.util
 import json
-import runpy
 from pathlib import Path
 
 import numpy as np
@@ -57,17 +57,21 @@ def test_train_script_runs_with_group_split_and_current_trainer(tmp_path, monkey
     )
     checkpoint = tmp_path / "checkpoints" / "baseline.pt"
 
-    namespace = runpy.run_path(
-        str(Path(__file__).parents[1] / "scripts" / "train.py"),
-        run_name="train_script_test",
+    script_path = Path(__file__).parents[1] / "scripts" / "train.py"
+    spec = importlib.util.spec_from_file_location(
+        "chicken_behavior_lab_train_script",
+        script_path,
     )
-    monkeypatch.setitem(
-        namespace,
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    monkeypatch.setattr(
+        module,
         "choose_device",
         lambda: torch.device("cpu"),
     )
 
-    namespace["main"](
+    module.main(
         [
             "--annotations",
             str(manifest),

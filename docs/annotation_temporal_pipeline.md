@@ -32,6 +32,19 @@ batch. Padding is represented by a false frame mask and false node/edge masks.
 Edges are removed from each frame's message-passing graph whenever either
 endpoint is invalid.
 
+### Fixed topology contract
+
+All samples collated into one temporal batch must use the same number and
+ordering of nodes, the same number of edges, and an identical edge_index.
+The collator also requires edge features to be present consistently and to
+have the same feature dimension. A sample with a different keypoint set or
+edge topology cannot be mixed into that batch.
+
+A missing or low-confidence keypoint should therefore remain in its canonical
+node position and be represented through the node-validity mask. Removing
+nodes or changing their order is not supported by the current batching path.
+The intended experiment uses one canonical skeleton definition throughout.
+
 The temporal GNN performs masked node pooling and compacts valid frames before
 the GRU. This supports both right-padding and internal invalid-frame gaps.
 
