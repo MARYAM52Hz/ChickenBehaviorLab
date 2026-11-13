@@ -12,6 +12,7 @@ _EXPORTS = {
     "build_confusion_matrix": (".metrics", "build_confusion_matrix"),
     "format_classification_report": (".metrics", "format_classification_report"),
     "Trainer": (".trainer", "Trainer"),
+    "TrainingConfig": (".config", "TrainingConfig"),
     "build_trainer": (".trainer_factory", "build_trainer"),
     "CheckpointManager": (".checkpoint", "CheckpointManager"),
     "load_checkpoint": (".checkpoint", "load_checkpoint"),
