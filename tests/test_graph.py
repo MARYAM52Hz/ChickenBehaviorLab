@@ -299,3 +299,64 @@ def test_temporal_graph_validation():
         graph.edge_feature_dimension
         == 3
     )
+
+
+# =========================================================
+# Canonical CBAS topology regression
+# =========================================================
+
+def test_canonical_cbas_topology_builds_all_directed_edge_features():
+    from chicken_behavior_lab.core.enums.keypoints import KeypointType
+    from chicken_behavior_lab.skeleton.base import CBAS_SKELETON_CONNECTIONS
+
+    keypoints = tuple(KeypointType)
+    keypoint_to_index = {
+        keypoint: index
+        for index, keypoint in enumerate(keypoints)
+    }
+    connections = [
+        (keypoint_to_index[source], keypoint_to_index[target])
+        for source, target in CBAS_SKELETON_CONNECTIONS
+    ]
+
+    assert len(keypoints) == 13
+    assert len(connections) == 12
+
+    features = np.zeros(
+        (4, len(keypoints), 7),
+        dtype=np.float32,
+    )
+    node_indices = np.arange(len(keypoints), dtype=np.float32)
+    features[:, :, 0] = node_indices
+    features[:, :, 1] = 2.0 * node_indices
+
+    sequence = TemporalFeatureSequence(
+        features=features,
+        frame_mask=np.ones(4, dtype=bool),
+        keypoint_mask=np.ones((4, len(keypoints)), dtype=bool),
+        frame_ids=("0", "1", "2", "3"),
+    )
+
+    graph = SkeletonGraphBuilder(
+        skeleton_connections=connections,
+    ).build(sequence)
+
+    assert graph.edge_index.shape == (2, 24)
+    assert graph.edge_features.shape == (4, 24, 3)
+
+    expected_edge_features = []
+    for source, target in connections:
+        delta = float(target - source)
+        distance = float(np.sqrt(delta**2 + (2.0 * delta) ** 2))
+        expected_edge_features.extend(
+            [
+                [delta, 2.0 * delta, distance],
+                [-delta, -2.0 * delta, distance],
+            ]
+        )
+
+    expected = np.asarray(expected_edge_features, dtype=np.float32)
+    np.testing.assert_allclose(
+        graph.edge_features,
+        np.broadcast_to(expected, (4, 24, 3)),
+    )
