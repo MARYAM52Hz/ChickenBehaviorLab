@@ -42,3 +42,24 @@ def test_analysis_exports():
 
     assert TemporalPredictionError is not None
     assert TemporalPredictionErrorAnalyzer is not None
+
+
+def test_all_public_analysis_exports_resolve():
+    import chicken_behavior_lab.analysis as analysis
+
+    expected_exports = {
+        "TrainingHistoryAnalyzer",
+        "TrainingCurveData",
+        "ConfusionMatrixAnalyzer",
+        "PredictionRecord",
+        "PredictionErrorAnalyzer",
+        "FeatureDiagnosticRecord",
+        "FeatureDiagnosticAnalyzer",
+        "GraphFeatureDiagnosticExtractor",
+        "TemporalPredictionError",
+        "TemporalPredictionErrorAnalyzer",
+    }
+
+    assert expected_exports.issubset(set(analysis.__all__))
+    for name in expected_exports:
+        assert getattr(analysis, name) is not None
