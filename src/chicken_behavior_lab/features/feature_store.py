@@ -55,6 +55,11 @@ class FeatureStore:
                 raise ValueError("feature_names length must match the feature dimension.")
             if len(set(sequence.feature_names)) != len(sequence.feature_names):
                 raise ValueError("feature_names must be unique.")
+        if sequence.keypoint_types is not None:
+            if len(sequence.keypoint_types) != num_keypoints:
+                raise ValueError("keypoint_types length must match the keypoint dimension.")
+            if len(set(sequence.keypoint_types)) != len(sequence.keypoint_types):
+                raise ValueError("keypoint_types must be unique.")
 
     def save(
         self,
