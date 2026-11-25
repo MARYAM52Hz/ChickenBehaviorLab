@@ -2,66 +2,24 @@ from __future__ import annotations
 
 import numpy as np
 
-from chicken_behavior_lab.features.temporal_features import (
-    TemporalFeatureSequence,
-)
-
-from chicken_behavior_lab.graphs.edge_features import (
-    EdgeFeatureBuilder,
-)
-
-from chicken_behavior_lab.graphs.temporal_skeleton_graph import (
-    TemporalSkeletonGraph,
-)
+from chicken_behavior_lab.features.temporal_features import TemporalFeatureSequence
+from chicken_behavior_lab.graphs.edge_features import EdgeFeatureBuilder
+from chicken_behavior_lab.graphs.temporal_skeleton_graph import TemporalSkeletonGraph
 
 
 class TemporalSkeletonGraphBuilder:
-    """
-    Convert a TemporalFeatureSequence into a
-    TemporalSkeletonGraph.
-    """
+    """Convert a TemporalFeatureSequence into a temporal skeleton graph."""
 
-    def __init__(
-        self,
-        edge_index: np.ndarray,
-    ) -> None:
+    def __init__(self, edge_index: np.ndarray) -> None:
+        self.edge_index = np.asarray(edge_index, dtype=np.int64)
+        self.edge_feature_builder = EdgeFeatureBuilder()
 
-        self.edge_index = np.asarray(
-            edge_index,
-            dtype=np.int64,
-        )
-
-        self.edge_feature_builder = (
-            EdgeFeatureBuilder()
-        )
-
-    def build(
-        self,
-        sequence: TemporalFeatureSequence,
-    ) -> TemporalSkeletonGraph:
-        """
-        Build a temporal skeleton graph.
-        """
-
-        if not isinstance(
-            sequence,
-            TemporalFeatureSequence,
-        ):
-            raise TypeError(
-                "sequence must be a "
-                "TemporalFeatureSequence."
-            )
-
-        node_features = (
-            np.asarray(
-                sequence.features,
-                dtype=np.float32,
-            )
-        )
-
+    def build(self, sequence: TemporalFeatureSequence) -> TemporalSkeletonGraph:
+        if not isinstance(sequence, TemporalFeatureSequence):
+            raise TypeError("sequence must be a TemporalFeatureSequence.")
+        node_features = np.asarray(sequence.features, dtype=np.float32)
         edge_features = self.edge_feature_builder.build(
-            node_features,
-            self.edge_index,
+            node_features, self.edge_index, sequence.feature_names
         )
         edge_valid = (
             sequence.keypoint_mask[:, self.edge_index[0]]
@@ -79,7 +37,5 @@ class TemporalSkeletonGraphBuilder:
             node_mask=sequence.keypoint_mask.copy(),
             keypoint_types=sequence.keypoint_types,
         )
-
         graph.validate()
-
         return graph
