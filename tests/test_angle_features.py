@@ -37,7 +37,7 @@ def test_edge_feature_shape():
 
     assert (
         edge_features.shape
-        == (5, 2, 3)
+        == (5, 2, 9)
     )
 
 
@@ -99,7 +99,7 @@ def test_relative_position():
         [
             3.0,
             4.0,
-            5.0,
+            5.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
         ],
     )
 
@@ -168,7 +168,7 @@ def test_reverse_edge():
         [
             -3.0,
             -4.0,
-            5.0,
+            5.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
         ],
     )
 
