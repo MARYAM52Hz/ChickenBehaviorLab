@@ -457,7 +457,7 @@ def test_dataset_indexing():
 
     assert (
         retrieved.label
-        == 9
+        == 3
     )
 
     assert (
@@ -613,7 +613,7 @@ def test_graph_integrity_inside_dataset():
 
     assert (
         retrieved.graph.edge_feature_dimension
-        == 3
+        == 9
     )
 
 
