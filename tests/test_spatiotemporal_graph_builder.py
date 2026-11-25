@@ -101,7 +101,7 @@ def test_spatiotemporal_graph():
 
     assert (
         graph.num_spatial_edges
-        == 4
+        == 8
     )
 
     # ----------------------------------------------
@@ -125,7 +125,7 @@ def test_spatiotemporal_graph():
     # Total
     # ----------------------------------------------
 
-    assert graph.num_edges == 10
+    assert graph.num_edges == 14
 
     # ----------------------------------------------
     # Edge features
@@ -138,8 +138,8 @@ def test_spatiotemporal_graph():
     # therefore D = 3
 
     assert graph.edge_features.shape == (
-        10,
-        3,
+        14,
+        9,
     )
 
 
@@ -219,4 +219,4 @@ def test_spatiotemporal_graph_preserves_flattened_masks_and_masks_invalid_edges(
     assert np.array_equal(graph.node_mask, expected_node_mask)
     source, target = graph.edge_index
     invalid_edges = ~(expected_node_mask[source] & expected_node_mask[target])
-    assert np.allclose(graph.edge_features[invalid_edges, :-1], 0.0)
+    assert np.allclose(graph.edge_features[invalid_edges], 0.0)
