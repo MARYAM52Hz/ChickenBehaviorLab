@@ -89,4 +89,4 @@ def test_tracked_skeleton_to_normalized_graph_and_feature_store(tmp_path):
     assert graph.node_features.shape == (3, len(KeypointType), 7)
     assert np.array_equal(graph.frame_mask, restored.frame_mask)
     assert np.array_equal(graph.node_mask, restored.keypoint_mask)
-    assert graph.edge_features.shape == (3, 24, 3)
+    assert graph.edge_features.shape == (3, 24, 9)
