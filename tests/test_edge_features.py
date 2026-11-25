@@ -11,7 +11,7 @@ def test_edge_features():
         [
             [
                 [0.0, 0.0],
-                [1.0, 1.0],
+                [1.0, 1.0, np.sqrt(2.0), 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
                 [2.0, 3.0],
             ]
         ],
@@ -36,7 +36,7 @@ def test_edge_features():
     assert edge_features.shape == (
         1,
         2,
-        2,
+        9,
     )
 
     np.testing.assert_allclose(
@@ -46,7 +46,7 @@ def test_edge_features():
 
     np.testing.assert_allclose(
         edge_features[0, 1],
-        [1.0, 2.0],
+        [1.0, 2.0, np.sqrt(5.0), 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
     )
 
 
