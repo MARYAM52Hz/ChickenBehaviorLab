@@ -183,6 +183,8 @@ class MotionFeatureNormalizer:
             frame_mask=sequence.frame_mask.copy(),
             keypoint_mask=valid_mask,
             frame_ids=sequence.frame_ids,
+            keypoint_types=sequence.keypoint_types,
+            feature_names=sequence.feature_names,
         )
 
     def is_fitted(self) -> bool:
