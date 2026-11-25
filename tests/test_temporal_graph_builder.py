@@ -15,7 +15,7 @@ def test_temporal_graph_builder():
         [
             [
                 [0.0, 0.0],
-                [1.0, 1.0],
+                [1.0, 1.0, np.sqrt(2.0), 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
                 [2.0, 3.0],
             ],
             [
@@ -77,7 +77,7 @@ def test_temporal_graph_builder():
 
     np.testing.assert_allclose(
         graph.edge_features[0, 1],
-        [1.0, 2.0],
+        [1.0, 2.0, np.sqrt(5.0), 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
     )
 
 
