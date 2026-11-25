@@ -191,6 +191,7 @@ def test_default_builder_preserves_the_complete_annotation_interval():
         frame_ids=[f"frame_{index}" for index in range(73)],
     )
     assert sequence.shape == (73, 2, 7)
+    assert sequence.feature_names == ("x", "y", "vx", "vy", "ax", "ay", "confidence")
     assert sequence.frame_mask.all()
     assert sequence.frame_ids[0] == "frame_0"
     assert sequence.frame_ids[-1] == "frame_72"
