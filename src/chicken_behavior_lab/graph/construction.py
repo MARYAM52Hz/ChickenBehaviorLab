@@ -12,6 +12,7 @@ import numpy as np
 from chicken_behavior_lab.features.temporal_features import TemporalFeatureSequence
 from chicken_behavior_lab.graph.edge_features import EdgeFeatureExtractor
 from chicken_behavior_lab.graph.graph import TemporalSkeletonGraph
+from chicken_behavior_lab.skeleton.topology import canonicalize_edge_index
 
 
 class SkeletonGraphBuilder:
@@ -30,18 +31,12 @@ class SkeletonGraphBuilder:
         self.edge_feature_extractor = edge_feature_extractor or EdgeFeatureExtractor()
 
     def build_edge_index(self) -> np.ndarray:
-        edges: list[tuple[int, int]] = []
-        for source, target in self.skeleton_connections:
-            if source < 0 or target < 0:
-                raise ValueError("Skeleton node indices must be non-negative.")
-            if source == target:
-                raise ValueError("Skeleton connections cannot contain self-loops.")
-            edges.append((source, target))
-            if not self.directed:
-                edges.append((target, source))
-        if len(set(edges)) != len(edges):
-            raise ValueError("Skeleton connections contain duplicate directed edges.")
-        return np.asarray(edges, dtype=np.int64).T
+        """Convert canonical connections into validated directed edge_index."""
+        raw_edges = np.asarray(self.skeleton_connections, dtype=np.int64).T
+        return canonicalize_edge_index(
+            raw_edges,
+            bidirectional=not self.directed,
+        )
 
     def build(self, sequence: TemporalFeatureSequence) -> TemporalSkeletonGraph:
         if not isinstance(sequence, TemporalFeatureSequence):
