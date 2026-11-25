@@ -457,7 +457,7 @@ def test_dataset_indexing():
 
     assert (
         retrieved.label
-        == 3
+        == 9
     )
 
     assert (
@@ -649,7 +649,7 @@ def test_edge_features_inside_dataset():
 
     assert (
         retrieved.graph.edge_features.shape
-        == (4, 4, 3)
+        == (4, 4, 9)
     )
 
 
