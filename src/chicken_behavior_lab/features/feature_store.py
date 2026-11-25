@@ -8,6 +8,7 @@ import re
 import numpy as np
 
 from chicken_behavior_lab.features.temporal_features import TemporalFeatureSequence
+from chicken_behavior_lab.core.enums.keypoints import KeypointType
 from chicken_behavior_lab.core.identifiers import normalize_track_id
 
 
@@ -99,6 +100,11 @@ class FeatureStore:
                 feature_names=(
                     tuple(str(item) for item in data["feature_names"])
                     if "feature_names" in data and data["feature_names"].size
+                    else None
+                ),
+                keypoint_types=(
+                    tuple(KeypointType(str(item)) for item in data["keypoint_types"])
+                    if "keypoint_types" in data and data["keypoint_types"].size
                     else None
                 ),
             )
