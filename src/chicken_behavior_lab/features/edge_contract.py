@@ -66,11 +66,6 @@ def build_combined_edge_features(
     names = resolve_feature_names(nodes.shape[-1], feature_names)
     indices = {name: names.index(name) for name in names}
 
-    def channel(name: str) -> np.ndarray:
-        if name not in indices:
-            return np.zeros(nodes.shape[:-1], dtype=np.float32)
-        return nodes[..., indices[name]]
-
     source = nodes[..., edges[0], :] if nodes.ndim == 3 else nodes[edges[0], :]
     target = nodes[..., edges[1], :] if nodes.ndim == 3 else nodes[edges[1], :]
 
