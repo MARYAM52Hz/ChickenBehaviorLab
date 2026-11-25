@@ -4,9 +4,7 @@ import numpy as np
 
 
 class SpatialEdgeExpander:
-    """
-    Expand skeleton connectivity across all frames.
-    """
+    """Expand canonical anatomical connections over frames as bidirectional edges."""
 
     def build(
         self,
@@ -14,85 +12,29 @@ class SpatialEdgeExpander:
         num_frames: int,
         num_keypoints: int,
     ) -> np.ndarray:
-        """
-        Repeat spatial skeleton edges for each frame.
-        """
+        edges = np.asarray(skeleton_edge_index, dtype=np.int64)
+        if edges.ndim != 2 or edges.shape[0] != 2:
+            raise ValueError("skeleton_edge_index must have shape (2, E).")
+        if num_frames <= 0 or num_keypoints <= 0:
+            raise ValueError("num_frames and num_keypoints must be positive.")
+        if edges.size and (np.any(edges < 0) or np.any(edges >= num_keypoints)):
+            raise ValueError("Skeleton edge index is outside the keypoint range.")
 
-        skeleton_edge_index = np.asarray(
-            skeleton_edge_index,
-            dtype=np.int64,
-        )
+        canonical: list[tuple[int, int]] = []
+        seen: set[tuple[int, int]] = set()
+        for source, target in edges.T.tolist():
+            if source == target:
+                raise ValueError("Skeleton topology cannot contain self-loops.")
+            for edge in ((source, target), (target, source)):
+                if edge not in seen:
+                    canonical.append(edge)
+                    seen.add(edge)
 
-        if skeleton_edge_index.ndim != 2:
-            raise ValueError(
-                "skeleton_edge_index must have "
-                "shape (2, E)."
-            )
-
-        if skeleton_edge_index.shape[0] != 2:
-            raise ValueError(
-                "skeleton_edge_index must have "
-                "shape (2, E)."
-            )
-
-        if num_frames <= 0:
-            raise ValueError(
-                "num_frames must be positive."
-            )
-
-        if num_keypoints <= 0:
-            raise ValueError(
-                "num_keypoints must be positive."
-            )
-
-        if skeleton_edge_index.size > 0:
-
-            if np.any(
-                skeleton_edge_index < 0
-            ):
-                raise ValueError(
-                    "Skeleton edge indices "
-                    "cannot be negative."
-                )
-
-            if np.any(
-                skeleton_edge_index
-                >= num_keypoints
-            ):
-                raise ValueError(
-                    "Skeleton edge index exceeds "
-                    "number of keypoints."
-                )
-
-        expanded_edges: list[
-            np.ndarray
-        ] = []
-
-        for frame_index in range(
-            num_frames
-        ):
-
-            offset = (
-                frame_index
-                * num_keypoints
-            )
-
-            frame_edges = (
-                skeleton_edge_index
-                + offset
-            )
-
-            expanded_edges.append(
-                frame_edges
-            )
-
-        if not expanded_edges:
-            return np.empty(
-                (2, 0),
-                dtype=np.int64,
-            )
-
-        return np.concatenate(
-            expanded_edges,
-            axis=1,
-        )
+        base = np.asarray(canonical, dtype=np.int64).T
+        if not canonical:
+            return np.empty((2, 0), dtype=np.int64)
+        expanded = [
+            base + frame_index * num_keypoints
+            for frame_index in range(num_frames)
+        ]
+        return np.concatenate(expanded, axis=1)
