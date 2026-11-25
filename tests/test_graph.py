@@ -160,7 +160,7 @@ def test_edge_features_are_attached():
 
     assert (
         graph.edge_features.shape
-        == (4, 2, 3)
+        == (4, 2, 9)
     )
 
     # 0 -> 1
@@ -169,11 +169,7 @@ def test_edge_features_are_attached():
             0,
             0,
         ],
-        [
-            3.0,
-            4.0,
-            5.0,
-        ],
+        [3.0, 4.0, 5.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
     )
 
     # 1 -> 0
@@ -182,11 +178,7 @@ def test_edge_features_are_attached():
             0,
             1,
         ],
-        [
-            -3.0,
-            -4.0,
-            5.0,
-        ],
+        [-3.0, -4.0, 5.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
     )
 
 
@@ -287,7 +279,7 @@ def test_temporal_graph_validation():
 
     assert (
         graph.num_nodes
-        == 3
+        == 9
     )
 
     assert (
