@@ -116,7 +116,7 @@ class DatasetFactory:
     @staticmethod
     def _load_feature_file(feature_file: Path) -> tuple[
         np.ndarray, np.ndarray, np.ndarray, np.ndarray | None,
-        np.ndarray | None, tuple[str, ...] | None
+        np.ndarray | None, tuple[str, ...] | None, tuple[str, ...] | None
     ]:
         if not feature_file.exists():
             raise FileNotFoundError(f"Feature file not found: {feature_file}")
