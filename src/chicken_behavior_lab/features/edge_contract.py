@@ -82,3 +82,54 @@ def build_combined_edge_features(
         target[..., indices["confidence"]] if "confidence" in indices else np.zeros_like(dx),
     ]
     return np.stack(values, axis=-1).astype(np.float32, copy=False)
+
+
+def validate_declared_edge_contract(
+    *,
+    node_features: np.ndarray,
+    edge_index: np.ndarray,
+    edge_features: np.ndarray | None,
+    edge_feature_names: tuple[str, ...] | list[str] | None,
+) -> None:
+    """Validate explicitly declared combined-edge metadata at ingestion.
+
+    Files without edge_feature_names are treated as legacy payloads and
+    remain loadable. Once names are declared, the complete nine-channel
+    contract and canonical bidirectional topology are mandatory.
+    """
+    if edge_feature_names is None:
+        return
+
+    from chicken_behavior_lab.skeleton.topology import canonicalize_edge_index
+
+    names = tuple(str(name) for name in edge_feature_names)
+    if names != EDGE_FEATURE_NAMES:
+        raise ValueError(
+            "Declared edge_feature_names must match the canonical nine-channel "
+            f"contract exactly: {EDGE_FEATURE_NAMES}."
+        )
+
+    nodes = np.asarray(node_features)
+    edges = np.asarray(edge_index, dtype=np.int64)
+    attributes = (
+        None if edge_features is None
+        else np.asarray(edge_features, dtype=np.float32)
+    )
+    if nodes.ndim != 3:
+        raise ValueError("Declared combined edge contract requires node_features (T,V,F).")
+    expected = (nodes.shape[0], edges.shape[1], len(EDGE_FEATURE_NAMES))
+    if attributes is None or attributes.shape != expected:
+        raise ValueError(
+            f"Declared combined edge contract requires edge_features shape {expected}."
+        )
+    if not np.isfinite(attributes).all():
+        raise ValueError("Declared combined edge features must contain only finite values.")
+
+    canonical = canonicalize_edge_index(
+        edges, num_keypoints=nodes.shape[1], bidirectional=True
+    )
+    if not np.array_equal(edges, canonical):
+        raise ValueError(
+            "Declared combined edge contract requires canonical, deduplicated, "
+            "bidirectional edge_index ordering."
+        )
