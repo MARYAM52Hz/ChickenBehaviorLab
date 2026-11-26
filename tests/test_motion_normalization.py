@@ -76,3 +76,12 @@ def test_fit_excludes_frames_without_required_body_landmarks():
     normalizer = MotionFeatureNormalizer()
     normalizer.fit([sequence])
     np.testing.assert_allclose(normalizer.statistics.velocity_mean, [1.0, 2.0])
+
+
+def test_normalizer_rejects_noncanonical_named_feature_order():
+    sequence = make_sequence()
+    sequence.feature_names = (
+        "y", "x", "vx", "vy", "ax", "ay", "confidence"
+    )
+    with pytest.raises(ValueError, match="canonical first seven channels"):
+        MotionFeatureNormalizer().fit([sequence])
