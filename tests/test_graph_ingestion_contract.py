@@ -92,18 +92,25 @@ def test_dataset_factory_rejects_noncanonical_declared_topology(tmp_path):
         DatasetFactory(_manifest(tmp_path, "sample.npz")).build()
 
 
-def _graph_json_payload(edge_index, edge_features, edge_feature_names):
+def _graph_json_payload(
+    edge_index, edge_features, edge_feature_names, *, frame_mask=None, node_mask=None
+):
     nodes, _, _ = _arrays()
+    graph = {
+        "node_features": nodes.tolist(),
+        "edge_index": edge_index.tolist(),
+        "edge_features": edge_features.tolist(),
+        "edge_feature_names": list(edge_feature_names),
+    }
+    if frame_mask is not None:
+        graph["frame_mask"] = np.asarray(frame_mask, dtype=bool).tolist()
+    if node_mask is not None:
+        graph["node_mask"] = np.asarray(node_mask, dtype=bool).tolist()
     return {
         "sample_id": "json-s1",
         "label": 0,
         "behavior_id": "walking",
-        "graph": {
-            "node_features": nodes.tolist(),
-            "edge_index": edge_index.tolist(),
-            "edge_features": edge_features.tolist(),
-            "edge_feature_names": list(edge_feature_names),
-        },
+        "graph": graph,
     }
 
 
@@ -148,4 +155,67 @@ def test_dataset_factory_rejects_edge_values_that_disagree_with_node_features(tm
     )
 
     with pytest.raises(ValueError, match="do not match the canonical combined"):
+        DatasetFactory(_manifest(tmp_path, "sample.npz")).build()
+
+
+
+def test_dataset_factory_accepts_masked_edges_zeroed_by_graph_builder(tmp_path):
+    nodes, edges, attrs = _arrays()
+    frame_mask = np.asarray([True])
+    node_mask = np.asarray([[True, False, True]])
+    masked_attrs = attrs.copy()
+    edge_valid = frame_mask[:, None] & node_mask[:, edges[0]] & node_mask[:, edges[1]]
+    masked_attrs[~edge_valid] = 0.0
+    np.savez(
+        tmp_path / "sample.npz",
+        node_features=nodes,
+        edge_index=edges,
+        edge_attr=masked_attrs,
+        edge_feature_names=np.asarray(EDGE_FEATURE_NAMES),
+        frame_mask=frame_mask,
+        node_mask=node_mask,
+    )
+
+    samples = DatasetFactory(_manifest(tmp_path, "sample.npz")).build()
+
+    assert len(samples) == 1
+    assert np.array_equal(samples[0].graph.node_mask, node_mask)
+    assert np.array_equal(samples[0].graph.edge_features, masked_attrs)
+
+
+def test_graph_json_loader_accepts_masked_edges_zeroed_by_graph_builder(tmp_path):
+    nodes, edges, attrs = _arrays()
+    frame_mask = np.asarray([True])
+    node_mask = np.asarray([[True, False, True]])
+    masked_attrs = attrs.copy()
+    edge_valid = frame_mask[:, None] & node_mask[:, edges[0]] & node_mask[:, edges[1]]
+    masked_attrs[~edge_valid] = 0.0
+    path = tmp_path / "masked.json"
+    path.write_text(
+        json.dumps(_graph_json_payload(
+            edges, masked_attrs, EDGE_FEATURE_NAMES,
+            frame_mask=frame_mask, node_mask=node_mask,
+        )),
+        encoding="utf-8",
+    )
+
+    samples = GraphJsonLoader().load(path)
+
+    assert len(samples) == 1
+    assert np.array_equal(samples[0].graph.node_mask, node_mask)
+    assert np.array_equal(samples[0].graph.edge_features, masked_attrs)
+
+
+def test_declared_edge_contract_rejects_malformed_mask_shape(tmp_path):
+    nodes, edges, attrs = _arrays()
+    np.savez(
+        tmp_path / "sample.npz",
+        node_features=nodes,
+        edge_index=edges,
+        edge_attr=attrs,
+        edge_feature_names=np.asarray(EDGE_FEATURE_NAMES),
+        node_mask=np.ones((1, 2), dtype=bool),
+    )
+
+    with pytest.raises(ValueError, match="node_mask must have shape"):
         DatasetFactory(_manifest(tmp_path, "sample.npz")).build()
