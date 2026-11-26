@@ -32,7 +32,12 @@ When `edge_feature_names` is present, ingestion validates all of the following b
 - expected `(T, E, 9)` shape;
 - finite edge values;
 - values match the canonical edge features recomputed from node features;
+- invalid edges are zeroed consistently with the optional frame and node masks;
 - edge topology is already canonical, deduplicated, and bidirectional.
+
+For declared-contract inputs, optional masks use `frame_mask[T]` and
+`node_mask[T,V]`. If omitted, all frames and nodes are treated as valid.
+Graph JSON loading preserves these masks when they are supplied.
 
 The loader rejects a declared contract that fails any check. It does not silently reorder edges or attempt to guess how edge attributes should be remapped.
 
