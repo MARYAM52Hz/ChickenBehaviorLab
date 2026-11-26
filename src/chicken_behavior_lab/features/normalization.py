@@ -78,6 +78,16 @@ class MotionFeatureNormalizer:
     def _validate_sequence(sequence: TemporalFeatureSequence) -> None:
         if sequence.features.ndim != 3 or sequence.features.shape[2] < 7:
             raise ValueError("features must have shape (T, V, F) with F >= 7.")
+        canonical_names = ("x", "y", "vx", "vy", "ax", "ay", "confidence")
+        if sequence.feature_names is not None:
+            names = tuple(sequence.feature_names)
+            if len(names) != sequence.features.shape[2] or len(set(names)) != len(names):
+                raise ValueError("feature_names must uniquely identify every feature channel.")
+            if names[:7] != canonical_names:
+                raise ValueError(
+                    "MotionFeatureNormalizer requires the canonical first seven channels: "
+                    "x, y, vx, vy, ax, ay, confidence."
+                )
         expected_mask_shape = sequence.features.shape[:2]
         if sequence.frame_mask.shape != (sequence.features.shape[0],):
             raise ValueError("frame_mask shape does not match the temporal dimension.")
@@ -183,6 +193,8 @@ class MotionFeatureNormalizer:
             frame_mask=sequence.frame_mask.copy(),
             keypoint_mask=valid_mask,
             frame_ids=sequence.frame_ids,
+            keypoint_types=sequence.keypoint_types,
+            feature_names=sequence.feature_names,
         )
 
     def is_fitted(self) -> bool:

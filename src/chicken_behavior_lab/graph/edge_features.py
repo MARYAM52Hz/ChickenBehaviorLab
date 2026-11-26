@@ -1,256 +1,39 @@
-"""
-ChickenBehaviorLab Edge Features
-=================================
-
-Geometric edge features for skeleton-based
-chicken behavior recognition.
-
-For every skeleton edge:
-
-    source -> target
-
-the following features are computed:
-
-    relative_dx
-    relative_dy
-    distance
-
-Input:
-
-    T × V × F
-
-Output:
-
-    T × E × D
-
-where:
-
-    T = temporal length
-    V = number of nodes
-    E = number of edges
-    F = node feature dimension
-    D = edge feature dimension
-"""
+"""Shared, named edge-feature extraction for temporal skeleton graphs."""
 
 from __future__ import annotations
 
 import numpy as np
 
+from chicken_behavior_lab.features.edge_contract import (
+    build_combined_edge_features,
+)
+
 
 class EdgeFeatureExtractor:
-    """
-    Extract geometric features for skeleton edges.
+    """Extract the canonical nine-channel combined edge representation."""
 
-    Parameters
-    ----------
-    x_index:
-        Index of x coordinate in node features.
-
-    y_index:
-        Index of y coordinate in node features.
-
-    epsilon:
-        Small numerical stability constant.
-    """
-
-    def __init__(
-        self,
-        x_index: int = 0,
-        y_index: int = 1,
-        epsilon: float = 1e-6,
-    ) -> None:
-
+    def __init__(self, x_index: int = 0, y_index: int = 1, epsilon: float = 1e-6) -> None:
         self.x_index = x_index
         self.y_index = y_index
         self.epsilon = epsilon
-
-    # =====================================================
-    # Main extraction
-    # =====================================================
 
     def extract(
         self,
         node_features: np.ndarray,
         edge_index: np.ndarray,
+        feature_names: tuple[str, ...] | None = None,
     ) -> np.ndarray:
-        """
-        Extract geometric edge features.
-
-        Parameters
-        ----------
-        node_features:
-            Node feature tensor.
-
-            Shape:
-                (T, V, F)
-
-        edge_index:
-            Graph connectivity.
-
-            Shape:
-                (2, E)
-
-        Returns
-        -------
-        np.ndarray
-            Edge feature tensor.
-
-            Shape:
-                (T, E, 3)
-
-            Feature order:
-
-                [relative_dx,
-                 relative_dy,
-                 distance]
-        """
-
-        self._validate_inputs(
-            node_features,
-            edge_index,
-        )
-
-        # -------------------------------------------------
-        # Edge endpoints
-        # -------------------------------------------------
-
-        source_indices = edge_index[0]
-        target_indices = edge_index[1]
-
-        # -------------------------------------------------
-        # Source coordinates
-        # -------------------------------------------------
-
-        source_xy = node_features[:, source_indices][:, :, [self.x_index, self.y_index]]
-
-        # -------------------------------------------------
-        # Target coordinates
-        # -------------------------------------------------
-
-        target_xy = node_features[:, target_indices][:, :, [self.x_index, self.y_index]]
-
-        # -------------------------------------------------
-        # Relative displacement
-        # -------------------------------------------------
-
-        relative = (
-            target_xy
-            - source_xy
-        )
-
-        # -------------------------------------------------
-        # Euclidean distance
-        # -------------------------------------------------
-
-        distance = np.linalg.norm(
-            relative,
-            axis=-1,
-            keepdims=True,
-        )
-
-        # -------------------------------------------------
-        # Final edge feature tensor
-        # -------------------------------------------------
-
-        edge_features = np.concatenate(
-            [
-                relative,
-                distance,
-            ],
-            axis=-1,
-        )
-
-        return edge_features.astype(
-            np.float32
-        )
-
-    # =====================================================
-    # Validation
-    # =====================================================
-
-    def _validate_inputs(
-        self,
-        node_features: np.ndarray,
-        edge_index: np.ndarray,
-    ) -> None:
-        """
-        Validate input dimensions and indices.
-        """
-
-        if node_features.ndim != 3:
-
-            raise ValueError(
-                "node_features must have shape "
-                "(T, V, F)."
-            )
-
-        if edge_index.ndim != 2:
-
-            raise ValueError(
-                "edge_index must have shape "
-                "(2, E)."
-            )
-
-        if edge_index.shape[0] != 2:
-
-            raise ValueError(
-                "edge_index first dimension "
-                "must be 2."
-            )
-
-        num_nodes = (
-            node_features.shape[1]
-        )
-
-        # -------------------------------------------------
-        # Validate node indices
-        # -------------------------------------------------
-
-        if edge_index.size > 0:
-
-            if np.any(
-                edge_index < 0
-            ):
-
-                raise ValueError(
-                    "edge_index cannot contain "
-                    "negative indices."
-                )
-
-            if np.any(
-                edge_index >= num_nodes
-            ):
-
-                raise ValueError(
-                    "edge_index contains a "
-                    "node index outside the "
-                    "node feature range."
-                )
-
-        # -------------------------------------------------
-        # Validate feature indices
-        # -------------------------------------------------
-
-        feature_dimension = (
-            node_features.shape[2]
-        )
-
-        if (
-            self.x_index < 0
-            or self.x_index >= feature_dimension
-        ):
-
-            raise ValueError(
-                "x_index is outside the "
-                "node feature dimension."
-            )
-
-        if (
-            self.y_index < 0
-            or self.y_index >= feature_dimension
-        ):
-
-            raise ValueError(
-                "y_index is outside the "
-                "node feature dimension."
-            )
+        nodes = np.asarray(node_features)
+        if nodes.ndim != 3:
+            raise ValueError("node_features must have shape (T, V, F).")
+        if feature_names is None and (self.x_index, self.y_index) != (0, 1):
+            feature_dim = nodes.shape[-1]
+            if not (0 <= self.x_index < feature_dim and 0 <= self.y_index < feature_dim):
+                raise ValueError("Coordinate feature indices are outside the node feature dimension.")
+            if self.x_index == self.y_index:
+                raise ValueError("x_index and y_index must be different.")
+            names = [f"feature_{index}" for index in range(feature_dim)]
+            names[self.x_index] = "x"
+            names[self.y_index] = "y"
+            feature_names = tuple(names)
+        return build_combined_edge_features(nodes, edge_index, feature_names)

@@ -7,19 +7,19 @@ from dataclasses import dataclass
 import numpy as np
 
 from chicken_behavior_lab.core.enums.keypoints import KeypointType
-
 from chicken_behavior_lab.features.motion import MotionFeatureFrame
 
 
 @dataclass(slots=True)
 class TemporalFeatureSequence:
-    """Temporal feature sequence with explicit frame and keypoint validity masks."""
+    """Temporal feature sequence with explicit validity masks and named channels."""
 
     features: np.ndarray
     frame_mask: np.ndarray
     keypoint_mask: np.ndarray
     frame_ids: tuple[str, ...]
     keypoint_types: tuple[KeypointType, ...] | None = None
+    feature_names: tuple[str, ...] | None = None
 
     @property
     def temporal_length(self) -> int:
@@ -39,12 +39,7 @@ class TemporalFeatureSequence:
 
 
 class TemporalFeatureBuilder:
-    """Build temporal features.
-
-    By default, preserve every frame supplied for an annotation. Set a
-    positive sequence_length only for legacy fixed-length truncation/padding.
-    Batch padding belongs to TemporalCollator, not this feature builder.
-    """
+    """Build temporal features while preserving channel names and validity masks."""
 
     def __init__(self, sequence_length: int | None = None) -> None:
         if sequence_length is not None and (
@@ -66,25 +61,20 @@ class TemporalFeatureBuilder:
 
         num_keypoints = frames[0].num_keypoints
         feature_dimension = frames[0].feature_dimension
+        feature_names = tuple(frames[0].feature_names)
         if frame_ids is None:
             frame_ids = [str(index) for index in range(len(frames))]
         if len(frame_ids) != len(frames):
             raise ValueError("frame_ids must have the same length as frames.")
 
         if self.sequence_length is None:
-            target_length = len(frames)
-            selected_frames = frames
-            selected_ids = frame_ids
+            target_length, selected_frames, selected_ids = len(frames), frames, frame_ids
         else:
             target_length = self.sequence_length
-            selected_frames = frames[-target_length:]
-            selected_ids = frame_ids[-target_length:]
-        actual_length = len(selected_frames)
-        start_index = target_length - actual_length
+            selected_frames, selected_ids = frames[-target_length:], frame_ids[-target_length:]
+        start_index = target_length - len(selected_frames)
 
-        features = np.zeros(
-            (target_length, num_keypoints, feature_dimension), dtype=np.float32
-        )
+        features = np.zeros((target_length, num_keypoints, feature_dimension), dtype=np.float32)
         frame_mask = np.zeros((target_length,), dtype=bool)
         keypoint_mask = np.zeros((target_length, num_keypoints), dtype=bool)
 
@@ -92,7 +82,6 @@ class TemporalFeatureBuilder:
             target_index = start_index + index
             features[target_index] = frame.features
             frame_mask[target_index] = True
-
             if frame.keypoint_mask is None:
                 mask = np.all(np.isfinite(frame.features), axis=1)
             else:
@@ -109,6 +98,7 @@ class TemporalFeatureBuilder:
             keypoint_mask=keypoint_mask,
             frame_ids=tuple(str(item) for item in padded_ids),
             keypoint_types=frames[0].keypoint_types,
+            feature_names=feature_names,
         )
 
     @staticmethod
@@ -119,6 +109,9 @@ class TemporalFeatureBuilder:
         expected_keypoints = first.num_keypoints
         expected_features = first.feature_dimension
         expected_keypoint_types = first.keypoint_types
+        expected_feature_names = tuple(first.feature_names)
+        if len(expected_feature_names) != expected_features or len(set(expected_feature_names)) != expected_features:
+            raise ValueError("feature_names must uniquely identify every feature channel.")
         if expected_keypoint_types is not None and (
             len(expected_keypoint_types) != expected_keypoints
             or len(set(expected_keypoint_types)) != expected_keypoints
@@ -129,19 +122,12 @@ class TemporalFeatureBuilder:
             if frame.features.ndim != 2:
                 raise ValueError(f"frame {index}.features must be a two-dimensional array.")
             if frame.num_keypoints != expected_keypoints:
-                raise ValueError(
-                    f"Inconsistent number of keypoints at frame {index}: "
-                    f"expected {expected_keypoints}, got {frame.num_keypoints}."
-                )
+                raise ValueError(f"Inconsistent number of keypoints at frame {index}.")
             if frame.keypoint_types != expected_keypoint_types:
-                raise ValueError(
-                    f"Inconsistent keypoint order at frame {index}: "
-                    "all frames must use the same keypoint_types."
-                )
+                raise ValueError(f"Inconsistent keypoint order at frame {index}.")
             if frame.feature_dimension != expected_features:
-                raise ValueError(
-                    f"Inconsistent feature dimension at frame {index}: "
-                    f"expected {expected_features}, got {frame.feature_dimension}."
-                )
+                raise ValueError(f"Inconsistent feature dimension at frame {index}.")
+            if tuple(frame.feature_names) != expected_feature_names:
+                raise ValueError(f"Inconsistent feature channel names at frame {index}.")
             if frame.keypoint_mask is not None and np.asarray(frame.keypoint_mask).shape != (expected_keypoints,):
                 raise ValueError(f"frame {index}.keypoint_mask must have shape (num_keypoints,).")

@@ -8,6 +8,7 @@ import re
 import numpy as np
 
 from chicken_behavior_lab.features.temporal_features import TemporalFeatureSequence
+from chicken_behavior_lab.core.enums.keypoints import KeypointType
 from chicken_behavior_lab.core.identifiers import normalize_track_id
 
 
@@ -49,6 +50,16 @@ class FeatureStore:
             raise ValueError("keypoint_mask must have shape (T, V).")
         if len(sequence.frame_ids) != temporal_length:
             raise ValueError("frame_ids length must match the temporal dimension.")
+        if sequence.feature_names is not None:
+            if len(sequence.feature_names) != sequence.features.shape[2]:
+                raise ValueError("feature_names length must match the feature dimension.")
+            if len(set(sequence.feature_names)) != len(sequence.feature_names):
+                raise ValueError("feature_names must be unique.")
+        if sequence.keypoint_types is not None:
+            if len(sequence.keypoint_types) != num_keypoints:
+                raise ValueError("keypoint_types length must match the keypoint dimension.")
+            if len(set(sequence.keypoint_types)) != len(sequence.keypoint_types):
+                raise ValueError("keypoint_types must be unique.")
 
     def save(
         self,
@@ -65,6 +76,12 @@ class FeatureStore:
             frame_mask=sequence.frame_mask,
             keypoint_mask=sequence.keypoint_mask,
             frame_ids=np.asarray(sequence.frame_ids, dtype=str),
+            feature_names=np.asarray(sequence.feature_names or (), dtype=str),
+            keypoint_types=np.asarray(
+                [item.value for item in sequence.keypoint_types]
+                if sequence.keypoint_types is not None else (),
+                dtype=str,
+            ),
         )
         return path
 
@@ -85,6 +102,16 @@ class FeatureStore:
                 frame_mask=data["frame_mask"],
                 keypoint_mask=data["keypoint_mask"],
                 frame_ids=tuple(str(item) for item in data["frame_ids"]),
+                feature_names=(
+                    tuple(str(item) for item in data["feature_names"])
+                    if "feature_names" in data and data["feature_names"].size
+                    else None
+                ),
+                keypoint_types=(
+                    tuple(KeypointType(str(item)) for item in data["keypoint_types"])
+                    if "keypoint_types" in data and data["keypoint_types"].size
+                    else None
+                ),
             )
         self._validate_sequence(sequence)
 
@@ -115,6 +142,8 @@ class FeatureStore:
             frame_mask=sequence.frame_mask[first_index:last_index + 1],
             keypoint_mask=sequence.keypoint_mask[first_index:last_index + 1],
             frame_ids=tuple(frame_ids[first_index:last_index + 1]),
+            keypoint_types=sequence.keypoint_types,
+            feature_names=sequence.feature_names,
         )
 
     def exists(self, video_id: str, track_id: str | int) -> bool:

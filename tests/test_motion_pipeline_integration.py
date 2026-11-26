@@ -79,6 +79,8 @@ def test_tracked_skeleton_to_normalized_graph_and_feature_store(tmp_path):
     restored = store.load("video_01", "bird_7")
     np.testing.assert_array_equal(restored.features, normalized.features)
     np.testing.assert_array_equal(restored.keypoint_mask, normalized.keypoint_mask)
+    assert restored.feature_names == normalized.feature_names
+    assert restored.keypoint_types == normalized.keypoint_types
 
     edges = [
         (0, 1), (1, 2), (2, 3), (3, 4), (3, 5),
@@ -89,4 +91,4 @@ def test_tracked_skeleton_to_normalized_graph_and_feature_store(tmp_path):
     assert graph.node_features.shape == (3, len(KeypointType), 7)
     assert np.array_equal(graph.frame_mask, restored.frame_mask)
     assert np.array_equal(graph.node_mask, restored.keypoint_mask)
-    assert graph.edge_features.shape == (3, 24, 3)
+    assert graph.edge_features.shape == (3, 24, 9)

@@ -613,7 +613,7 @@ def test_graph_integrity_inside_dataset():
 
     assert (
         retrieved.graph.edge_feature_dimension
-        == 3
+        == 9
     )
 
 
@@ -649,7 +649,7 @@ def test_edge_features_inside_dataset():
 
     assert (
         retrieved.graph.edge_features.shape
-        == (4, 4, 3)
+        == (4, 4, 9)
     )
 
 
