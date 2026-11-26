@@ -8,6 +8,7 @@ import numpy as np
 
 from chicken_behavior_lab.dataset.sample import GraphSample
 from chicken_behavior_lab.graph.graph import TemporalSkeletonGraph
+from chicken_behavior_lab.features.edge_contract import validate_declared_edge_contract
 
 
 class GraphJsonLoader:
@@ -184,6 +185,13 @@ class GraphJsonLoader:
                 dtype=np.float32,
             )
 
+        edge_feature_names = graph_data.get("edge_feature_names")
+        validate_declared_edge_contract(
+            node_features=node_features,
+            edge_index=edge_index,
+            edge_features=edge_features,
+            edge_feature_names=edge_feature_names,
+        )
         graph = TemporalSkeletonGraph(
             node_features=node_features,
             edge_index=edge_index,
