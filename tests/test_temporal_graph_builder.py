@@ -59,3 +59,15 @@ def test_temporal_graph_builder_preserves_masks_and_zeros_invalid_edges():
     assert graph.edge_index.shape == (2, 4)
     assert np.allclose(graph.edge_features[0], 0.0)
     assert np.allclose(graph.edge_features[1], 0.0)
+
+
+def test_temporal_graph_builder_rejects_out_of_range_keypoint_indices():
+    sequence = TemporalFeatureSequence(
+        features=np.zeros((1, 3, 2), dtype=np.float32),
+        frame_mask=np.array([True]),
+        keypoint_mask=np.ones((1, 3), dtype=bool),
+        frame_ids=("1",),
+    )
+    invalid_edges = np.array([[0], [3]], dtype=np.int64)
+    with np.testing.assert_raises_regex(ValueError, "outside the keypoint range"):
+        TemporalSkeletonGraphBuilder(invalid_edges).build(sequence)
