@@ -186,16 +186,30 @@ class GraphJsonLoader:
             )
 
         edge_feature_names = graph_data.get("edge_feature_names")
+        frame_mask = (
+            np.asarray(graph_data["frame_mask"], dtype=bool)
+            if graph_data.get("frame_mask") is not None
+            else None
+        )
+        node_mask = (
+            np.asarray(graph_data["node_mask"], dtype=bool)
+            if graph_data.get("node_mask") is not None
+            else None
+        )
         validate_declared_edge_contract(
             node_features=node_features,
             edge_index=edge_index,
             edge_features=edge_features,
             edge_feature_names=edge_feature_names,
             node_feature_names=graph_data.get("node_feature_names"),
+            frame_mask=frame_mask,
+            node_mask=node_mask,
         )
         graph = TemporalSkeletonGraph(
             node_features=node_features,
             edge_index=edge_index,
+            frame_mask=frame_mask,
+            node_mask=node_mask,
             edge_features=edge_features,
         )
 
