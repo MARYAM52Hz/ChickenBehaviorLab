@@ -133,3 +133,19 @@ def test_graph_json_loader_rejects_noncanonical_declared_topology(tmp_path):
 
     with pytest.raises(ValueError, match="canonical, deduplicated"):
         GraphJsonLoader().load(path)
+
+
+def test_dataset_factory_rejects_edge_values_that_disagree_with_node_features(tmp_path):
+    nodes, edges, attrs = _arrays()
+    attrs = attrs.copy()
+    attrs[0, 0, 0] += 0.25
+    np.savez(
+        tmp_path / "sample.npz",
+        node_features=nodes,
+        edge_index=edges,
+        edge_attr=attrs,
+        edge_feature_names=np.asarray(EDGE_FEATURE_NAMES),
+    )
+
+    with pytest.raises(ValueError, match="do not match the canonical combined"):
+        DatasetFactory(_manifest(tmp_path, "sample.npz")).build()
