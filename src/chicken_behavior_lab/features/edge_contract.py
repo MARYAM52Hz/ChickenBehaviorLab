@@ -90,6 +90,7 @@ def validate_declared_edge_contract(
     edge_index: np.ndarray,
     edge_features: np.ndarray | None,
     edge_feature_names: tuple[str, ...] | list[str] | None,
+    node_feature_names: tuple[str, ...] | list[str] | None = None,
 ) -> None:
     """Validate explicitly declared combined-edge metadata at ingestion.
 
@@ -124,6 +125,16 @@ def validate_declared_edge_contract(
         )
     if not np.isfinite(attributes).all():
         raise ValueError("Declared combined edge features must contain only finite values.")
+
+    expected_attributes = build_combined_edge_features(
+        nodes, edges,
+        None if node_feature_names is None else tuple(node_feature_names),
+    )
+    if not np.allclose(attributes, expected_attributes, rtol=1e-5, atol=1e-6):
+        raise ValueError(
+            "Declared edge_features do not match the canonical combined "
+            "features computed from node_features."
+        )
 
     canonical = canonicalize_edge_index(
         edges, num_keypoints=nodes.shape[1], bidirectional=True
