@@ -159,17 +159,19 @@ class DatasetFactory:
             raise ValueError(f"{record.sample_id}: edge_index must have shape (2, E).")
         if edge_attr.ndim != 3 or edge_attr.shape[:2] != (temporal_length, edge_index.shape[1]):
             raise ValueError(f"{record.sample_id}: edge_attr must have shape (T, E, D).")
+        if frame_mask is None:
+            frame_mask = np.ones((temporal_length,), dtype=bool)
+        if node_mask is None:
+            node_mask = np.ones((temporal_length, num_nodes), dtype=bool)
         validate_declared_edge_contract(
             node_features=node_features,
             edge_index=edge_index,
             edge_features=edge_attr,
             edge_feature_names=edge_feature_names,
             node_feature_names=node_feature_names,
+            frame_mask=frame_mask,
+            node_mask=node_mask,
         )
-        if frame_mask is None:
-            frame_mask = np.ones((temporal_length,), dtype=bool)
-        if node_mask is None:
-            node_mask = np.ones((temporal_length, num_nodes), dtype=bool)
 
         graph = TemporalSkeletonGraph(
             node_features=node_features,
