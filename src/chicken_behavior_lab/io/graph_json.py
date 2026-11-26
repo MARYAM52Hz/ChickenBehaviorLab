@@ -191,6 +191,7 @@ class GraphJsonLoader:
             edge_index=edge_index,
             edge_features=edge_features,
             edge_feature_names=edge_feature_names,
+            node_feature_names=graph_data.get("node_feature_names"),
         )
         graph = TemporalSkeletonGraph(
             node_features=node_features,
