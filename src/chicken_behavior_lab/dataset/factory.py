@@ -135,16 +135,24 @@ class DatasetFactory:
                 if "edge_feature_names" in data
                 else None
             )
+            node_feature_names = (
+                tuple(str(name) for name in data["node_feature_names"].tolist())
+                if "node_feature_names" in data
+                else None
+            )
         if node_features.ndim == 2:
             node_features = node_features[None, ...]
         if edge_attr.ndim == 2:
             edge_attr = edge_attr[None, ...]
-        return node_features, edge_index, edge_attr, frame_mask, node_mask, edge_feature_names
+        return (
+            node_features, edge_index, edge_attr, frame_mask, node_mask,
+            edge_feature_names, node_feature_names
+        )
 
     def _build_sample(self, record: AnnotationRecord) -> GraphSample:
         (
             node_features, edge_index, edge_attr, frame_mask, node_mask,
-            edge_feature_names,
+            edge_feature_names, node_feature_names,
         ) = self._load_feature_file(record.feature_file)
         temporal_length, num_nodes, _ = node_features.shape
         if edge_index.ndim != 2 or edge_index.shape[0] != 2:
@@ -156,6 +164,7 @@ class DatasetFactory:
             edge_index=edge_index,
             edge_features=edge_attr,
             edge_feature_names=edge_feature_names,
+            node_feature_names=node_feature_names,
         )
         if frame_mask is None:
             frame_mask = np.ones((temporal_length,), dtype=bool)
