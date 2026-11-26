@@ -91,6 +91,8 @@ def validate_declared_edge_contract(
     edge_features: np.ndarray | None,
     edge_feature_names: tuple[str, ...] | list[str] | None,
     node_feature_names: tuple[str, ...] | list[str] | None = None,
+    frame_mask: np.ndarray | None = None,
+    node_mask: np.ndarray | None = None,
 ) -> None:
     """Validate explicitly declared combined-edge metadata at ingestion.
 
@@ -130,6 +132,31 @@ def validate_declared_edge_contract(
         nodes, edges,
         None if node_feature_names is None else tuple(node_feature_names),
     )
+
+    # Match the graph builders: an edge is usable only when its frame and
+    # both endpoint keypoints are valid. Invalid edge attributes are stored
+    # as zeros, while validity remains represented by the masks.
+    if frame_mask is not None:
+        frame_mask = np.asarray(frame_mask, dtype=bool)
+        if frame_mask.shape != (nodes.shape[0],):
+            raise ValueError("frame_mask must have shape (T,).")
+    else:
+        frame_mask = np.ones((nodes.shape[0],), dtype=bool)
+
+    if node_mask is not None:
+        node_mask = np.asarray(node_mask, dtype=bool)
+        if node_mask.shape != nodes.shape[:2]:
+            raise ValueError("node_mask must have shape (T, V).")
+    else:
+        node_mask = np.ones(nodes.shape[:2], dtype=bool)
+
+    edge_valid = (
+        frame_mask[:, None]
+        & node_mask[:, edges[0]]
+        & node_mask[:, edges[1]]
+    )
+    expected_attributes[~edge_valid] = 0.0
+
     if not np.allclose(attributes, expected_attributes, rtol=1e-5, atol=1e-6):
         raise ValueError(
             "Declared edge_features do not match the canonical combined "
