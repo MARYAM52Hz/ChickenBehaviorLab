@@ -72,3 +72,10 @@ The temporal PyG path retains the shared spatial topology and temporal edge
 attributes. Empty spatial edge sets are supported as `edge_index[2,0]` with
 `edge_attr[T,0,D]`; the temporal collator and edge-aware GNN should preserve
 these shapes without inventing self-edges.
+
+
+The `TemporalBatch` boundary additionally verifies boolean mask dtypes,
+finite node and edge tensors, and that each `edge_mask` is exactly derived
+from the frame mask and both endpoint node masks. It checks that per-frame
+PyG edge indices and edge attributes agree with the padded temporal tensors
+and their masks before the model consumes them.
