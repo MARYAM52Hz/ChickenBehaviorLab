@@ -8,6 +8,13 @@ import numpy as np
 
 from chicken_behavior_lab.dataset.sample import GraphSample
 from chicken_behavior_lab.graph.graph import TemporalSkeletonGraph
+from chicken_behavior_lab.features.edge_contract import (
+    validate_declared_edge_contract,
+    validate_binary_mask,
+    validate_edge_index_input,
+    validate_node_feature_array,
+    validate_edge_feature_array,
+)
 
 
 class GraphJsonLoader:
@@ -164,15 +171,11 @@ class GraphJsonLoader:
                 f"{sorted(missing_graph)}"
             )
 
-        node_features = np.asarray(
-            graph_data["node_features"],
-            dtype=np.float32,
+        node_features = validate_node_feature_array(
+            np.asarray(graph_data["node_features"], dtype=np.float32)
         )
 
-        edge_index = np.asarray(
-            graph_data["edge_index"],
-            dtype=np.int64,
-        )
+        edge_index = validate_edge_index_input(graph_data["edge_index"])
 
         edge_features = None
 
@@ -183,10 +186,57 @@ class GraphJsonLoader:
                 graph_data["edge_features"],
                 dtype=np.float32,
             )
+            # JSON arrays with E=0 cannot encode the trailing feature
+            # dimension; recover it from the declared channel names.
+            if (
+                edge_features.ndim == 2
+                and edge_features.shape[1] == 0
+                and graph_data.get("edge_feature_names") is not None
+            ):
+                edge_features = edge_features.reshape(
+                    node_features.shape[0],
+                    0,
+                    len(graph_data["edge_feature_names"]),
+                )
+            edge_features = validate_edge_feature_array(
+                edge_features,
+                temporal_length=node_features.shape[0],
+                num_edges=edge_index.shape[1],
+            )
 
+        edge_feature_names = graph_data.get("edge_feature_names")
+        frame_mask = (
+            validate_binary_mask(
+                graph_data["frame_mask"],
+                name="frame_mask",
+                shape=(node_features.shape[0],),
+            )
+            if graph_data.get("frame_mask") is not None
+            else None
+        )
+        node_mask = (
+            validate_binary_mask(
+                graph_data["node_mask"],
+                name="node_mask",
+                shape=node_features.shape[:2],
+            )
+            if graph_data.get("node_mask") is not None
+            else None
+        )
+        validate_declared_edge_contract(
+            node_features=node_features,
+            edge_index=edge_index,
+            edge_features=edge_features,
+            edge_feature_names=edge_feature_names,
+            node_feature_names=graph_data.get("node_feature_names"),
+            frame_mask=frame_mask,
+            node_mask=node_mask,
+        )
         graph = TemporalSkeletonGraph(
             node_features=node_features,
             edge_index=edge_index,
+            frame_mask=frame_mask,
+            node_mask=node_mask,
             edge_features=edge_features,
         )
 
