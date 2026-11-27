@@ -178,6 +178,10 @@ def validate_edge_index_input(edge_index: np.ndarray) -> np.ndarray:
     raw = np.asarray(edge_index)
     if raw.ndim != 2 or raw.shape[0] != 2:
         raise ValueError("edge_index must have shape (2, E).")
+    # JSON encodes a shaped empty (2, 0) array as [[], []], which NumPy
+    # infers as float64. There are no values to coerce or misinterpret.
+    if raw.size == 0:
+        return raw.astype(np.int64, copy=False)
     if not np.issubdtype(raw.dtype, np.integer):
         raise ValueError("edge_index must contain integer-valued indices.")
     return raw.astype(np.int64, copy=False)
