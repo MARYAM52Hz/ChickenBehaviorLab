@@ -103,9 +103,9 @@ def _graph_json_payload(
         "edge_feature_names": list(edge_feature_names),
     }
     if frame_mask is not None:
-        graph["frame_mask"] = np.asarray(frame_mask, dtype=bool).tolist()
+        graph["frame_mask"] = np.asarray(frame_mask).tolist()
     if node_mask is not None:
-        graph["node_mask"] = np.asarray(node_mask, dtype=bool).tolist()
+        graph["node_mask"] = np.asarray(node_mask).tolist()
     return {
         "sample_id": "json-s1",
         "label": 0,
