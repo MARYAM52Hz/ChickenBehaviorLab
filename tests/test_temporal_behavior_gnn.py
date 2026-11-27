@@ -78,3 +78,48 @@ def test_temporal_behavior_gnn_backward():
     loss.backward()
     gradients = [p.grad for p in model.parameters() if p.requires_grad]
     assert any(g is not None and torch.isfinite(g).all() for g in gradients)
+
+
+
+def test_temporal_gnn_handles_empty_spatial_edge_set_end_to_end():
+    length = 3
+    graph = TemporalSkeletonGraph(
+        node_features=np.ones((length, 5, 8), dtype=np.float32),
+        edge_index=np.empty((2, 0), dtype=np.int64),
+        frame_mask=np.ones(length, dtype=bool),
+        node_mask=np.ones((length, 5), dtype=bool),
+        edge_features=np.empty((length, 0, 9), dtype=np.float32),
+    )
+    sample = GraphSample(
+        graph=graph,
+        label=0,
+        behavior_id="feeding",
+        sample_id="empty_edges",
+        metadata={
+            "video_id": "video_empty",
+            "track_id": "track_1",
+            "start_frame": 10,
+            "end_frame": 12,
+        },
+    )
+    dataset = TemporalPyGDataset([sample])
+    loader = make_temporal_dataloader(dataset, batch_size=1, shuffle=False)
+    batch = next(iter(loader))
+    model = TemporalBehaviorGNN(
+        node_feature_dim=8,
+        edge_feature_dim=9,
+        spatial_hidden_dim=16,
+        temporal_hidden_dim=24,
+        num_classes=2,
+        num_gnn_layers=1,
+        num_gru_layers=1,
+        dropout=0.0,
+    )
+
+    assert batch.edge_index.shape == (2, 0)
+    assert batch.edge_attr.shape == (1, length, 0, 9)
+    assert batch.frame_batches[0].edge_index.shape == (2, 0)
+    assert batch.frame_batches[0].edge_attr.shape == (0, 9)
+    logits = model(batch)
+    assert logits.shape == (1, 2)
+    assert torch.isfinite(logits).all()
