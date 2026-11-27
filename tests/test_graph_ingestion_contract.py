@@ -345,3 +345,63 @@ def test_dataset_factory_rejects_empty_node_feature_dimensions(tmp_path, nodes):
 
     with pytest.raises(ValueError, match="non-zero T, V, and F"):
         DatasetFactory(_manifest(tmp_path, "sample.npz")).build()
+
+
+
+def test_dataset_factory_rejects_non_finite_legacy_edge_features(tmp_path):
+    nodes, edges, attrs = _arrays()
+    attrs = attrs.copy()
+    attrs[0, 0, 0] = np.nan
+    np.savez(
+        tmp_path / "legacy.npz",
+        node_features=nodes,
+        edge_index=edges,
+        edge_attr=attrs,
+    )
+
+    with pytest.raises(ValueError, match="edge_features must contain only finite"):
+        DatasetFactory(_manifest(tmp_path, "legacy.npz")).build()
+
+
+def test_graph_json_loader_rejects_non_finite_legacy_edge_features(tmp_path):
+    nodes, edges, attrs = _arrays()
+    attrs = attrs.copy()
+    attrs[0, 0, 0] = np.inf
+    payload = _graph_json_payload(edges, attrs, EDGE_FEATURE_NAMES)
+    payload["graph"].pop("edge_feature_names")
+    path = tmp_path / "legacy-non-finite.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="edge_features must contain only finite"):
+        GraphJsonLoader().load(path)
+
+
+def test_dataset_factory_rejects_complex_masks(tmp_path):
+    nodes, edges, attrs = _arrays()
+    np.savez(
+        tmp_path / "sample.npz",
+        node_features=nodes,
+        edge_index=edges,
+        edge_attr=attrs,
+        node_mask=np.asarray([[1 + 0j, 1 + 0j, 0 + 0j]]),
+    )
+
+    with pytest.raises(ValueError, match="binary real numeric"):
+        DatasetFactory(_manifest(tmp_path, "sample.npz")).build()
+
+
+def test_graph_json_loader_accepts_empty_declared_edge_set(tmp_path):
+    nodes, _, _ = _arrays()
+    empty_edges = np.empty((2, 0), dtype=np.int64)
+    empty_attrs = np.empty((1, 0, len(EDGE_FEATURE_NAMES)), dtype=np.float32)
+    path = tmp_path / "empty-edges.json"
+    path.write_text(
+        json.dumps(_graph_json_payload(empty_edges, empty_attrs, EDGE_FEATURE_NAMES)),
+        encoding="utf-8",
+    )
+
+    samples = GraphJsonLoader().load(path)
+
+    assert len(samples) == 1
+    assert samples[0].graph.edge_index.shape == (2, 0)
+    assert samples[0].graph.edge_features.shape == (1, 0, 9)
