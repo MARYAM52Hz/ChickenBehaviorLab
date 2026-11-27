@@ -10,7 +10,7 @@ import numpy as np
 from chicken_behavior_lab.core.identifiers import normalize_track_id
 from chicken_behavior_lab.dataset.sample import GraphSample
 from chicken_behavior_lab.graph.graph import TemporalSkeletonGraph
-from chicken_behavior_lab.features.edge_contract import validate_declared_edge_contract
+from chicken_behavior_lab.features.edge_contract import (\n    validate_declared_edge_contract,\n    validate_binary_mask,\n    validate_edge_index_input,\n    validate_node_feature_array,\n)
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,7 +154,7 @@ class DatasetFactory:
             node_features, edge_index, edge_attr, frame_mask, node_mask,
             edge_feature_names, node_feature_names,
         ) = self._load_feature_file(record.feature_file)
-        temporal_length, num_nodes, _ = node_features.shape
+        node_features = validate_node_feature_array(node_features)\n        temporal_length, num_nodes, _ = node_features.shape
         if edge_index.ndim != 2 or edge_index.shape[0] != 2:
             raise ValueError(f"{record.sample_id}: edge_index must have shape (2, E).")
         if edge_attr.ndim != 3 or edge_attr.shape[:2] != (temporal_length, edge_index.shape[1]):
