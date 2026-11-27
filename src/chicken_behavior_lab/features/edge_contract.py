@@ -171,3 +171,38 @@ def validate_declared_edge_contract(
             "Declared combined edge contract requires canonical, deduplicated, "
             "bidirectional edge_index ordering."
         )
+
+
+def validate_edge_index_input(edge_index: np.ndarray) -> np.ndarray:
+    """Validate raw edge indices before converting them to an integer dtype."""
+    raw = np.asarray(edge_index)
+    if raw.ndim != 2 or raw.shape[0] != 2:
+        raise ValueError("edge_index must have shape (2, E).")
+    if not np.issubdtype(raw.dtype, np.integer):
+        raise ValueError("edge_index must contain integer-valued indices.")
+    return raw.astype(np.int64, copy=False)
+
+
+def validate_binary_mask(mask: np.ndarray, *, name: str, shape: tuple[int, ...]) -> np.ndarray:
+    """Accept boolean masks or numeric masks containing only zero and one."""
+    raw = np.asarray(mask)
+    if raw.shape != shape:
+        raise ValueError(f"{name} must have shape {shape}.")
+    if raw.dtype != np.bool_:
+        if not np.issubdtype(raw.dtype, np.number):
+            raise ValueError(f"{name} must contain boolean or binary numeric values.")
+        if not np.isfinite(raw).all() or not np.isin(raw, (0, 1)).all():
+            raise ValueError(f"{name} must contain only boolean or 0/1 values.")
+    return raw.astype(bool, copy=False)
+
+
+def validate_node_feature_array(node_features: np.ndarray) -> np.ndarray:
+    """Validate temporal node features before downstream graph construction."""
+    nodes = np.asarray(node_features, dtype=np.float32)
+    if nodes.ndim != 3:
+        raise ValueError("node_features must have shape (T, V, F).")
+    if any(size == 0 for size in nodes.shape):
+        raise ValueError("node_features must have non-zero T, V, and F dimensions.")
+    if not np.isfinite(nodes).all():
+        raise ValueError("node_features must contain only finite values.")
+    return nodes
