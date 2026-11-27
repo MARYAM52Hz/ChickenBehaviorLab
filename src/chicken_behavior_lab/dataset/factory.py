@@ -159,7 +159,7 @@ class DatasetFactory:
             node_features, edge_index, edge_attr, frame_mask, node_mask,
             edge_feature_names, node_feature_names,
         ) = self._load_feature_file(record.feature_file)
-        node_features = validate_node_feature_array(node_features)\n        node_features = validate_node_feature_array(node_features)
+        node_features = validate_node_feature_array(node_features)
         temporal_length, num_nodes, _ = node_features.shape
         if edge_index.ndim != 2 or edge_index.shape[0] != 2:
             raise ValueError(f"{record.sample_id}: edge_index must have shape (2, E).")
