@@ -8,7 +8,12 @@ import numpy as np
 
 from chicken_behavior_lab.dataset.sample import GraphSample
 from chicken_behavior_lab.graph.graph import TemporalSkeletonGraph
-from chicken_behavior_lab.features.edge_contract import validate_declared_edge_contract
+from chicken_behavior_lab.features.edge_contract import (
+    validate_declared_edge_contract,
+    validate_binary_mask,
+    validate_edge_index_input,
+    validate_node_feature_array,
+)
 
 
 class GraphJsonLoader:
@@ -165,15 +170,11 @@ class GraphJsonLoader:
                 f"{sorted(missing_graph)}"
             )
 
-        node_features = np.asarray(
-            graph_data["node_features"],
-            dtype=np.float32,
+        node_features = validate_node_feature_array(
+            np.asarray(graph_data["node_features"], dtype=np.float32)
         )
 
-        edge_index = np.asarray(
-            graph_data["edge_index"],
-            dtype=np.int64,
-        )
+        edge_index = validate_edge_index_input(graph_data["edge_index"])
 
         edge_features = None
 
@@ -187,12 +188,20 @@ class GraphJsonLoader:
 
         edge_feature_names = graph_data.get("edge_feature_names")
         frame_mask = (
-            np.asarray(graph_data["frame_mask"], dtype=bool)
+            validate_binary_mask(
+                graph_data["frame_mask"],
+                name="frame_mask",
+                shape=(node_features.shape[0],),
+            )
             if graph_data.get("frame_mask") is not None
             else None
         )
         node_mask = (
-            np.asarray(graph_data["node_mask"], dtype=bool)
+            validate_binary_mask(
+                graph_data["node_mask"],
+                name="node_mask",
+                shape=node_features.shape[:2],
+            )
             if graph_data.get("node_mask") is not None
             else None
         )
