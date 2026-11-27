@@ -10,7 +10,12 @@ import numpy as np
 from chicken_behavior_lab.core.identifiers import normalize_track_id
 from chicken_behavior_lab.dataset.sample import GraphSample
 from chicken_behavior_lab.graph.graph import TemporalSkeletonGraph
-from chicken_behavior_lab.features.edge_contract import (\n    validate_declared_edge_contract,\n    validate_binary_mask,\n    validate_edge_index_input,\n    validate_node_feature_array,\n)
+from chicken_behavior_lab.features.edge_contract import (
+    validate_declared_edge_contract,
+    validate_binary_mask,
+    validate_edge_index_input,
+    validate_node_feature_array,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,10 +131,10 @@ class DatasetFactory:
             if missing:
                 raise ValueError(f"Feature file {feature_file} is missing fields: {missing}.")
             node_features = np.asarray(data["node_features"], dtype=np.float32)
-            edge_index = np.asarray(data["edge_index"], dtype=np.int64)
+            edge_index = validate_edge_index_input(data["edge_index"])
             edge_attr = np.asarray(data["edge_attr"], dtype=np.float32)
-            frame_mask = np.asarray(data["frame_mask"], dtype=bool) if "frame_mask" in data else None
-            node_mask = np.asarray(data["node_mask"], dtype=bool) if "node_mask" in data else None
+            frame_mask = np.asarray(data["frame_mask"]) if "frame_mask" in data else None
+            node_mask = np.asarray(data["node_mask"]) if "node_mask" in data else None
             edge_feature_names = (
                 tuple(str(name) for name in data["edge_feature_names"].tolist())
                 if "edge_feature_names" in data
@@ -154,15 +159,24 @@ class DatasetFactory:
             node_features, edge_index, edge_attr, frame_mask, node_mask,
             edge_feature_names, node_feature_names,
         ) = self._load_feature_file(record.feature_file)
-        node_features = validate_node_feature_array(node_features)\n        temporal_length, num_nodes, _ = node_features.shape
+        node_features = validate_node_feature_array(node_features)\n        node_features = validate_node_feature_array(node_features)
+        temporal_length, num_nodes, _ = node_features.shape
         if edge_index.ndim != 2 or edge_index.shape[0] != 2:
             raise ValueError(f"{record.sample_id}: edge_index must have shape (2, E).")
         if edge_attr.ndim != 3 or edge_attr.shape[:2] != (temporal_length, edge_index.shape[1]):
             raise ValueError(f"{record.sample_id}: edge_attr must have shape (T, E, D).")
         if frame_mask is None:
             frame_mask = np.ones((temporal_length,), dtype=bool)
+        else:
+            frame_mask = validate_binary_mask(
+                frame_mask, name="frame_mask", shape=(temporal_length,)
+            )
         if node_mask is None:
             node_mask = np.ones((temporal_length, num_nodes), dtype=bool)
+        else:
+            node_mask = validate_binary_mask(
+                node_mask, name="node_mask", shape=(temporal_length, num_nodes)
+            )
         validate_declared_edge_contract(
             node_features=node_features,
             edge_index=edge_index,
