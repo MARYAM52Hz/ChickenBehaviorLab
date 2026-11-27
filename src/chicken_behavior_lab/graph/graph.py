@@ -22,6 +22,23 @@ from dataclasses import dataclass
 import numpy as np
 
 
+def _validate_edge_index_dtype(edge_index: np.ndarray) -> None:
+    if not np.issubdtype(edge_index.dtype, np.integer):
+        raise TypeError("edge_index must use an integer dtype.")
+
+
+def _validate_binary_mask(mask: np.ndarray, name: str) -> None:
+    if mask.dtype == np.bool_:
+        return
+    if (
+        not np.issubdtype(mask.dtype, np.number)
+        or np.issubdtype(mask.dtype, np.complexfloating)
+    ):
+        raise TypeError(f"{name} must use boolean or real numeric values.")
+    if not np.isfinite(mask).all() or not np.isin(mask, (0, 1)).all():
+        raise ValueError(f"{name} must contain only boolean or 0/1 values.")
+
+
 @dataclass(slots=True)
 class SkeletonGraph:
     """
@@ -113,6 +130,8 @@ class SkeletonGraph:
                 "node_features must have shape "
                 "(V, F)."
             )
+        if any(size == 0 for size in self.node_features.shape):
+            raise ValueError("node_features must have non-zero V and F dimensions.")
 
         # -------------------------------------------------
         # Edge index
@@ -131,6 +150,7 @@ class SkeletonGraph:
                 "edge_index first dimension "
                 "must be 2."
             )
+        _validate_edge_index_dtype(self.edge_index)
 
         # -------------------------------------------------
         # Edge features
@@ -169,6 +189,7 @@ class SkeletonGraph:
                     "node_mask must have shape "
                     "(V,)."
                 )
+            _validate_binary_mask(self.node_mask, "node_mask")
 
         # -------------------------------------------------
         # Edge index range
@@ -292,6 +313,8 @@ class TemporalSkeletonGraph:
                 "node_features must have shape "
                 "(T, V, F)."
             )
+        if any(size == 0 for size in self.node_features.shape):
+            raise ValueError("node_features must have non-zero T, V, and F dimensions.")
 
         # -------------------------------------------------
         # Edge index
@@ -310,6 +333,7 @@ class TemporalSkeletonGraph:
                 "edge_index first dimension "
                 "must be 2."
             )
+        _validate_edge_index_dtype(self.edge_index)
 
         # -------------------------------------------------
         # Dimensions
@@ -334,6 +358,7 @@ class TemporalSkeletonGraph:
                 "frame_mask must have shape "
                 "(T,)."
             )
+        _validate_binary_mask(self.frame_mask, "frame_mask")
 
         # -------------------------------------------------
         # Node mask
@@ -346,6 +371,7 @@ class TemporalSkeletonGraph:
                 "node_mask must have shape "
                 "(T, V)."
             )
+        _validate_binary_mask(self.node_mask, "node_mask")
 
         # -------------------------------------------------
         # Edge index range
