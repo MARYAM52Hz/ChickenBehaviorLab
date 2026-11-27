@@ -53,6 +53,14 @@ class TemporalBatch:
             raise ValueError("frame_mask must have shape (B, T).")
         if self.node_mask.shape != (b, t, n):
             raise ValueError("node_mask must have shape (B, T, N).")
+        for name, mask in (
+            ("frame_mask", self.frame_mask),
+            ("node_mask", self.node_mask),
+        ):
+            if mask.dtype != torch.bool:
+                raise TypeError(f"{name} must use torch.bool.")
+        if not torch.isfinite(self.x).all():
+            raise ValueError("x must contain only finite values.")
         if self.edge_index.ndim != 2 or self.edge_index.shape[0] != 2:
             raise ValueError("edge_index must have shape (2, E).")
         e = self.edge_index.shape[1]
@@ -64,9 +72,26 @@ class TemporalBatch:
             torch.any(self.edge_index < 0) or torch.any(self.edge_index >= n)
         ):
             raise ValueError("edge_index contains an invalid node index.")
+        if self.edge_mask.dtype != torch.bool:
+            raise TypeError("edge_mask must use torch.bool.")
         if self.edge_attr is not None:
             if self.edge_attr.ndim != 4 or self.edge_attr.shape[:3] != (b, t, e):
                 raise ValueError("edge_attr must have shape (B, T, E, D).")
+            if self.edge_attr.shape[3] < 1:
+                raise ValueError("edge_attr must contain at least one feature channel.")
+            if not torch.isfinite(self.edge_attr).all():
+                raise ValueError("edge_attr must contain only finite values.")
+        if e:
+            source, target = self.edge_index
+            expected_edge_mask = (
+                self.frame_mask.unsqueeze(-1)
+                & self.node_mask[:, :, source]
+                & self.node_mask[:, :, target]
+            )
+        else:
+            expected_edge_mask = torch.zeros_like(self.edge_mask)
+        if not torch.equal(self.edge_mask, expected_edge_mask):
+            raise ValueError("edge_mask must match frame_mask and both endpoint node masks.")
         if self.y.shape != (b,):
             raise ValueError("y must have shape (B,).")
         if self.start_frame.shape != (b,) or self.end_frame.shape != (b,):
@@ -95,6 +120,37 @@ class TemporalBatch:
                 raise ValueError(f"frame_batches[{index}] must contain B graphs.")
             if frame_batch.x.ndim != 2 or frame_batch.x.shape != (b * n, f):
                 raise ValueError(f"frame_batches[{index}].x has an incompatible shape.")
+            expected_x = self.x[:, index].reshape(b * n, f)
+            if not torch.equal(frame_batch.x, expected_x):
+                raise ValueError(f"frame_batches[{index}].x does not match padded batch features.")
+            expected_edges = torch.cat(
+                [
+                    self.edge_index[:, self.edge_mask[sample_index, index]]
+                    + sample_index * n
+                    for sample_index in range(b)
+                ],
+                dim=1,
+            )
+            if not torch.equal(frame_batch.edge_index, expected_edges):
+                raise ValueError(
+                    f"frame_batches[{index}].edge_index does not match edge_mask."
+                )
+            frame_edge_attr = getattr(frame_batch, "edge_attr", None)
+            if self.edge_attr is None:
+                if frame_edge_attr is not None:
+                    raise ValueError("Frame batches must omit edge_attr when batch edge_attr is None.")
+            else:
+                expected_attr = torch.cat(
+                    [
+                        self.edge_attr[sample_index, index, self.edge_mask[sample_index, index]]
+                        for sample_index in range(b)
+                    ],
+                    dim=0,
+                )
+                if frame_edge_attr is None or not torch.equal(frame_edge_attr, expected_attr):
+                    raise ValueError(
+                        f"frame_batches[{index}].edge_attr does not match edge_mask and edge_attr."
+                    )
 
     def to(self, device: torch.device | str) -> "TemporalBatch":
         for name in ("x", "edge_index", "y", "start_frame", "end_frame",
