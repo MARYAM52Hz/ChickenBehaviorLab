@@ -13,6 +13,7 @@ from chicken_behavior_lab.features.edge_contract import (
     validate_binary_mask,
     validate_edge_index_input,
     validate_node_feature_array,
+    validate_edge_feature_array,
 )
 
 
@@ -184,6 +185,11 @@ class GraphJsonLoader:
             edge_features = np.asarray(
                 graph_data["edge_features"],
                 dtype=np.float32,
+            )
+            edge_features = validate_edge_feature_array(
+                edge_features,
+                temporal_length=node_features.shape[0],
+                num_edges=edge_index.shape[1],
             )
 
         edge_feature_names = graph_data.get("edge_feature_names")
