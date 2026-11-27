@@ -75,3 +75,56 @@ def test_graph_validation_and_combined_edge_dimension():
     assert temporal.num_nodes == 3
     assert temporal.num_edges == 4
     assert temporal.edge_feature_dimension == 9
+
+
+
+def test_temporal_graph_rejects_non_integer_edge_index_before_downstream_cast():
+    graph = TemporalSkeletonGraph(
+        node_features=np.zeros((2, 3, 4), dtype=np.float32),
+        edge_index=np.asarray([[0.0, 1.5], [1.0, 2.0]], dtype=np.float64),
+    )
+    import pytest
+    with pytest.raises(TypeError, match="integer dtype"):
+        graph.validate()
+
+
+def test_temporal_graph_rejects_non_binary_masks():
+    import pytest
+    graph = TemporalSkeletonGraph(
+        node_features=np.zeros((2, 3, 4), dtype=np.float32),
+        edge_index=np.empty((2, 0), dtype=np.int64),
+        frame_mask=np.asarray([1, 2], dtype=np.int64),
+    )
+    with pytest.raises(ValueError, match="frame_mask must contain only"):
+        graph.validate()
+
+
+def test_temporal_graph_rejects_complex_node_masks():
+    import pytest
+    graph = TemporalSkeletonGraph(
+        node_features=np.zeros((2, 3, 4), dtype=np.float32),
+        edge_index=np.empty((2, 0), dtype=np.int64),
+        node_mask=np.ones((2, 3), dtype=np.complex64),
+    )
+    with pytest.raises(TypeError, match="node_mask must use boolean or real"):
+        graph.validate()
+
+
+def test_temporal_graph_rejects_empty_feature_dimensions():
+    import pytest
+    graph = TemporalSkeletonGraph(
+        node_features=np.zeros((2, 3, 0), dtype=np.float32),
+        edge_index=np.empty((2, 0), dtype=np.int64),
+    )
+    with pytest.raises(ValueError, match="non-zero T, V, and F"):
+        graph.validate()
+
+
+def test_legacy_skeleton_graph_rejects_non_integer_edge_index():
+    import pytest
+    graph = SkeletonGraph(
+        node_features=np.zeros((3, 4), dtype=np.float32),
+        edge_index=np.asarray([[0.0], [1.5]], dtype=np.float32),
+    )
+    with pytest.raises(TypeError, match="integer dtype"):
+        graph.validate()
