@@ -219,3 +219,86 @@ def test_declared_edge_contract_rejects_malformed_mask_shape(tmp_path):
 
     with pytest.raises(ValueError, match="node_mask must have shape"):
         DatasetFactory(_manifest(tmp_path, "sample.npz")).build()
+
+
+
+def test_dataset_factory_rejects_fractional_edge_indices_before_integer_cast(tmp_path):
+    nodes, edges, attrs = _arrays()
+    fractional_edges = edges.astype(np.float64)
+    fractional_edges[0, 0] = 0.5
+    np.savez(
+        tmp_path / "sample.npz",
+        node_features=nodes,
+        edge_index=fractional_edges,
+        edge_attr=attrs,
+        edge_feature_names=np.asarray(EDGE_FEATURE_NAMES),
+    )
+
+    with pytest.raises(ValueError, match="edge_index must contain integer-valued"):
+        DatasetFactory(_manifest(tmp_path, "sample.npz")).build()
+
+
+def test_dataset_factory_rejects_non_binary_masks_before_bool_cast(tmp_path):
+    nodes, edges, attrs = _arrays()
+    np.savez(
+        tmp_path / "sample.npz",
+        node_features=nodes,
+        edge_index=edges,
+        edge_attr=attrs,
+        edge_feature_names=np.asarray(EDGE_FEATURE_NAMES),
+        node_mask=np.asarray([[1, 2, 1]]),
+    )
+
+    with pytest.raises(ValueError, match="node_mask must contain only boolean or 0/1"):
+        DatasetFactory(_manifest(tmp_path, "sample.npz")).build()
+
+
+def test_dataset_factory_rejects_non_finite_node_features(tmp_path):
+    nodes, edges, attrs = _arrays()
+    nodes[0, 1, 0] = np.nan
+    np.savez(
+        tmp_path / "sample.npz",
+        node_features=nodes,
+        edge_index=edges,
+        edge_attr=attrs,
+        edge_feature_names=np.asarray(EDGE_FEATURE_NAMES),
+    )
+
+    with pytest.raises(ValueError, match="node_features must contain only finite"):
+        DatasetFactory(_manifest(tmp_path, "sample.npz")).build()
+
+
+def test_graph_json_loader_rejects_fractional_edge_indices(tmp_path):
+    nodes, edges, attrs = _arrays()
+    fractional_edges = edges.astype(np.float64)
+    fractional_edges[0, 0] = 0.5
+    payload = _graph_json_payload(fractional_edges, attrs, EDGE_FEATURE_NAMES)
+    path = tmp_path / "fractional.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="edge_index must contain integer-valued"):
+        GraphJsonLoader().load(path)
+
+
+def test_graph_json_loader_rejects_non_binary_masks(tmp_path):
+    nodes, edges, attrs = _arrays()
+    payload = _graph_json_payload(
+        edges, attrs, EDGE_FEATURE_NAMES, node_mask=np.asarray([[1, 2, 1]])
+    )
+    path = tmp_path / "bad-mask.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="node_mask must contain only boolean or 0/1"):
+        GraphJsonLoader().load(path)
+
+
+def test_graph_json_loader_rejects_non_finite_node_features(tmp_path):
+    nodes, edges, attrs = _arrays()
+    nodes[0, 1, 0] = np.inf
+    payload = _graph_json_payload(edges, attrs, EDGE_FEATURE_NAMES)
+    payload["graph"]["node_features"] = nodes.tolist()
+    path = tmp_path / "non-finite.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="node_features must contain only finite"):
+        GraphJsonLoader().load(path)
