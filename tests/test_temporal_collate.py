@@ -69,3 +69,34 @@ def test_temporal_batch_to_device():
     assert batch.node_mask.device.type == "cpu"
     assert batch.edge_mask.device.type == "cpu"
     assert batch.frame_batches[0].x.device.type == "cpu"
+
+
+
+def test_temporal_batch_rejects_edge_mask_inconsistent_with_node_masks():
+    dataset = TemporalPyGDataset([make_sample("mask_mismatch", 2, 0)])
+    batch = TemporalCollator()([dataset[0]])
+    batch.edge_mask[0, 0, 0] = False
+
+    import pytest
+    with pytest.raises(ValueError, match="edge_mask must match"):
+        batch.validate()
+
+
+def test_temporal_batch_rejects_non_finite_edge_attributes():
+    dataset = TemporalPyGDataset([make_sample("non_finite_edge", 2, 0)])
+    batch = TemporalCollator()([dataset[0]])
+    batch.edge_attr[0, 0, 0, 0] = float("nan")
+
+    import pytest
+    with pytest.raises(ValueError, match="edge_attr must contain only finite"):
+        batch.validate()
+
+
+def test_temporal_batch_rejects_non_boolean_masks():
+    dataset = TemporalPyGDataset([make_sample("mask_dtype", 2, 0)])
+    batch = TemporalCollator()([dataset[0]])
+    batch.frame_mask = batch.frame_mask.to(torch.float32)
+
+    import pytest
+    with pytest.raises(TypeError, match="frame_mask must use torch.bool"):
+        batch.validate()
