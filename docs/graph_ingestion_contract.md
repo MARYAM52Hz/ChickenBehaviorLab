@@ -58,3 +58,17 @@ This allows older experiments to remain readable while making new-format data
 explicit and auditable.
 
 New data exports should always include `edge_feature_names`. The CVAT adapter and real-video export are still separate future work; this contract does not claim that a CVAT export has been integrated or validated.
+
+
+## In-memory graph and PyG boundary
+
+`SkeletonGraph` and `TemporalSkeletonGraph` also validate edge-index integer
+dtypes and boolean/binary masks before downstream conversion. Temporal node
+feature dimensions must be non-zero. This prevents direct in-memory
+`GraphSample` construction from bypassing the dtype and mask checks that file
+ingestion performs.
+
+The temporal PyG path retains the shared spatial topology and temporal edge
+attributes. Empty spatial edge sets are supported as `edge_index[2,0]` with
+`edge_attr[T,0,D]`; the temporal collator and edge-aware GNN should preserve
+these shapes without inventing self-edges.
