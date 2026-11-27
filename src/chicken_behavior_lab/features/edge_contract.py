@@ -189,11 +189,33 @@ def validate_binary_mask(mask: np.ndarray, *, name: str, shape: tuple[int, ...])
     if raw.shape != shape:
         raise ValueError(f"{name} must have shape {shape}.")
     if raw.dtype != np.bool_:
-        if not np.issubdtype(raw.dtype, np.number):
-            raise ValueError(f"{name} must contain boolean or binary numeric values.")
+        if (
+            not np.issubdtype(raw.dtype, np.number)
+            or np.issubdtype(raw.dtype, np.complexfloating)
+        ):
+            raise ValueError(f"{name} must contain boolean or binary real numeric values.")
         if not np.isfinite(raw).all() or not np.isin(raw, (0, 1)).all():
             raise ValueError(f"{name} must contain only boolean or 0/1 values.")
     return raw.astype(bool, copy=False)
+
+
+def validate_edge_feature_array(
+    edge_features: np.ndarray,
+    *,
+    temporal_length: int,
+    num_edges: int,
+) -> np.ndarray:
+    """Validate temporal edge attributes, including legacy unnamed arrays."""
+    attributes = np.asarray(edge_features, dtype=np.float32)
+    if attributes.ndim != 3 or attributes.shape[:2] != (temporal_length, num_edges):
+        raise ValueError(
+            "edge_features must have shape (T, E, D) matching node_features and edge_index."
+        )
+    if attributes.shape[2] == 0:
+        raise ValueError("edge_features must contain at least one feature channel.")
+    if not np.isfinite(attributes).all():
+        raise ValueError("edge_features must contain only finite values.")
+    return attributes
 
 
 def validate_node_feature_array(node_features: np.ndarray) -> np.ndarray:
