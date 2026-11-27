@@ -302,3 +302,46 @@ def test_graph_json_loader_rejects_non_finite_node_features(tmp_path):
 
     with pytest.raises(ValueError, match="node_features must contain only finite"):
         GraphJsonLoader().load(path)
+
+
+
+def test_dataset_factory_accepts_empty_edge_set_with_explicit_shape(tmp_path):
+    nodes, _, _ = _arrays()
+    empty_edges = np.empty((2, 0), dtype=np.int64)
+    empty_attrs = np.empty((1, 0, len(EDGE_FEATURE_NAMES)), dtype=np.float32)
+    np.savez(
+        tmp_path / "sample.npz",
+        node_features=nodes,
+        edge_index=empty_edges,
+        edge_attr=empty_attrs,
+        edge_feature_names=np.asarray(EDGE_FEATURE_NAMES),
+    )
+
+    samples = DatasetFactory(_manifest(tmp_path, "sample.npz")).build()
+
+    assert len(samples) == 1
+    assert samples[0].graph.edge_index.shape == (2, 0)
+    assert samples[0].graph.edge_features.shape == (1, 0, 9)
+
+
+@pytest.mark.parametrize(
+    "nodes",
+    [
+        np.empty((0, 3, 7), dtype=np.float32),
+        np.empty((1, 0, 7), dtype=np.float32),
+        np.empty((1, 3, 0), dtype=np.float32),
+    ],
+    ids=["zero-frames", "zero-keypoints", "zero-feature-channels"],
+)
+def test_dataset_factory_rejects_empty_node_feature_dimensions(tmp_path, nodes):
+    _, edges, attrs = _arrays()
+    np.savez(
+        tmp_path / "sample.npz",
+        node_features=nodes,
+        edge_index=edges,
+        edge_attr=attrs,
+        edge_feature_names=np.asarray(EDGE_FEATURE_NAMES),
+    )
+
+    with pytest.raises(ValueError, match="non-zero T, V, and F"):
+        DatasetFactory(_manifest(tmp_path, "sample.npz")).build()
