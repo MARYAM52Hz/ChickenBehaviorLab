@@ -15,6 +15,7 @@ from chicken_behavior_lab.features.edge_contract import (
     validate_binary_mask,
     validate_edge_index_input,
     validate_node_feature_array,
+    validate_edge_feature_array,
 )
 
 
@@ -165,6 +166,11 @@ class DatasetFactory:
             raise ValueError(f"{record.sample_id}: edge_index must have shape (2, E).")
         if edge_attr.ndim != 3 or edge_attr.shape[:2] != (temporal_length, edge_index.shape[1]):
             raise ValueError(f"{record.sample_id}: edge_attr must have shape (T, E, D).")
+        edge_attr = validate_edge_feature_array(
+            edge_attr,
+            temporal_length=temporal_length,
+            num_edges=edge_index.shape[1],
+        )
         if frame_mask is None:
             frame_mask = np.ones((temporal_length,), dtype=bool)
         else:
