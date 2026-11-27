@@ -186,6 +186,18 @@ class GraphJsonLoader:
                 graph_data["edge_features"],
                 dtype=np.float32,
             )
+            # JSON arrays with E=0 cannot encode the trailing feature
+            # dimension; recover it from the declared channel names.
+            if (
+                edge_features.ndim == 2
+                and edge_features.shape[1] == 0
+                and graph_data.get("edge_feature_names") is not None
+            ):
+                edge_features = edge_features.reshape(
+                    node_features.shape[0],
+                    0,
+                    len(graph_data["edge_feature_names"]),
+                )
             edge_features = validate_edge_feature_array(
                 edge_features,
                 temporal_length=node_features.shape[0],
